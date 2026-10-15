@@ -2,7 +2,13 @@
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
 version: 1.0.0
+author: ajitta
 license: MIT
+platforms: [linux, macos]
+metadata:
+  hermes:
+    tags: [KOSPI, KRX, Korea, Stock Market, Forecast, Pre-market, Briefing, Investor Flows, Finance, Cron]
+    homepage: https://github.com/ajitta/kospi-morning-forecast
 ---
 
 # KOSPI Morning Forecast
