@@ -4,16 +4,30 @@
 #   bash scripts/install.sh                 # install skill + scripts only
 #   bash scripts/install.sh --cron          # also create the weekday 08:00 KST cron job (delivers to home channel)
 #   bash scripts/install.sh --cron telegram # pick a delivery target (origin|local|telegram|discord|platform:chat_id)
+#   bash scripts/install.sh --with-history  # also seed the forecast log from the repo's `data` branch
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 SKILL_DIR="$HERMES_HOME/skills/research/kospi-morning-forecast"
+# must match the scripts' default (they don't follow HERMES_HOME)
+DATA_DIR="${KOSPI_FORECAST_DIR:-$HOME/.hermes/data/kospi_forecast}"
+DATA_REPO="${KOSPI_DATA_REPO:-https://github.com/ajitta/kospi-morning-forecast.git}"
+
+CRON=0; DELIVER=origin; HISTORY=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cron) CRON=1; if [[ $# -gt 1 && "$2" != --* ]]; then DELIVER="$2"; shift; fi ;;
+    --with-history) HISTORY=1 ;;
+    *) echo "unknown option: $1"; exit 1 ;;
+  esac
+  shift
+done
 
 command -v hermes >/dev/null || { echo "hermes CLI not found — install Hermes Agent first"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 not found"; exit 1; }
 
-mkdir -p "$SKILL_DIR" "$HERMES_HOME/scripts" "$HERMES_HOME/data/kospi_forecast"
+mkdir -p "$SKILL_DIR" "$HERMES_HOME/scripts" "$DATA_DIR"
 cp -r "$SRC/SKILL.md" "$SRC/references" "$SKILL_DIR/"
 mkdir -p "$SKILL_DIR/scripts"
 cp "$SRC"/scripts/*.py "$SRC/scripts/install.sh" "$SKILL_DIR/scripts/"
@@ -28,8 +42,21 @@ else
   echo "! smoke test did not produce a forecast — run: python3 $HERMES_HOME/scripts/kospi_morning.py --force"
 fi
 
-if [[ "${1:-}" == "--cron" ]]; then
-  DELIVER="${2:-origin}"
+if [[ $HISTORY == 1 ]]; then
+  # The data branch is the publisher's track record (forecasts + realised closes). Your own forecasts
+  # append to it locally; they are committed but never pushed unless you set `git config kospi.push true`.
+  if [[ -d "$DATA_DIR/.git" ]]; then
+    git -C "$DATA_DIR" pull -q --ff-only && echo "✓ history updated → $DATA_DIR" \
+      || echo "! $DATA_DIR has diverged from the data branch — left as is"
+  elif [[ -n "$(ls -A "$DATA_DIR")" ]]; then
+    echo "! $DATA_DIR already has data — not overwritten. Move it aside and re-run to seed history."
+  else
+    git clone -q --branch data --single-branch "$DATA_REPO" "$DATA_DIR"
+    echo "✓ history → $DATA_DIR ($(wc -l < "$DATA_DIR/predictions.jsonl") forecasts)"
+  fi
+fi
+
+if [[ $CRON == 1 ]]; then
   # Cron schedules use Hermes' timezone (HERMES_TIMEZONE / `timezone:` in config.yaml / server local).
   TZNAME="$(python3 - <<'EOF'
 import os, re

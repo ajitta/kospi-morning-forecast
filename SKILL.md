@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.0.0
+version: 1.1.0
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -18,13 +18,20 @@ previous-session KOSPI investor flows (spot / futures / options / program), over
 strong/weak themes, foreign & institution top-10 net buy/sell with reasons, and today's KOSPI
 direction forecast that is recorded and scored the next day. KOSPI only — KOSDAQ excluded.
 
-## Install / share
+## Install / share / release
 
 Bundled files: `scripts/kospi_morning.py` (collector, cron `script=`), `scripts/kospi_model.py`
 (baseline), `scripts/kospi_record.py` (forecast log), `references/cron-prompt.md` (job prompt).
 `bash scripts/install.sh [--cron <deliver>]` copies the scripts to `~/.hermes/scripts/` (cron
-scripts must live there) and optionally creates the weekday 08:00 KST job. After editing a script,
-copy it back into this skill's `scripts/` so the shareable bundle stays in sync.
+scripts must live there), smoke-tests the live data path, and optionally creates the weekday
+08:00 KST job (schedule translated from Hermes' timezone).
+
+Canonical source is the public repo `ajitta/kospi-morning-forecast` (working copy
+`~/work/kospi-morning-forecast`). Every change ships as: edit the working copy → run
+`bash scripts/install.sh` (syncs `~/.hermes/scripts/` + this skill dir) → bump `version:` in SKILL.md
+→ commit, tag `vX.Y.Z`, push, `gh release create` with a one-line changelog. If the cron prompt
+changes, update `references/cron-prompt.md` and the live job together. General sharing procedure:
+`hermes-agent-skill-authoring` → `references/sharing-user-skills.md`.
 
 ## Always-on rules
 
@@ -76,6 +83,12 @@ current KOSPI 20-day vol. Walk-forward 2019–2026 out-of-sample: direction 64% 
 Brier 0.222 vs 0.247 base rate, well calibrated, 68% range covered 65.5%. Foreign spot flow and the
 previous day's KOSPI move were tested and added nothing — don't re-add them as adjustment reasons.
 
+Changing the baseline: add a feature only if it improves walk-forward (refit every 40 days, test from
+2019) Brier over the current model, and update the numbers quoted above and in the README. History
+for features comes from Naver `api.stock.naver.com/chart/{domestic|foreign}/index/{code}/day`
+(daily since 2016) and Daum investor days (`perPage=100`, ~26 pages back to 2016). Night futures have
+no history source, so they stay an adjustment input, not a feature.
+
 Adjustment: final P(상승) = baseline ± at most 10pp (the record script rejects more). Adjust only for
 information the model can't see, and name it with a number + source:
 - KOSPI200 night-futures move (cite level/%; it overlaps with the US move, so adjust only for the gap
@@ -91,9 +104,17 @@ outside.
 
 Actual close-to-close > 0 = 상승, else 하락. Scored separately for baseline and final: direction hit,
 Brier, and 68%-range coverage (target ~68%). After ≥20 records the scorecard says whether the
-adjustments helped (Brier final vs baseline). If adjustments keep hurting, adjust less. Last record per
-date wins. File: `~/.hermes/data/kospi_forecast/predictions.jsonl` (records without `p_model` are
-ignored).
+adjustments helped (Brier final vs baseline). If adjustments keep hurting, adjust less.
+
+Files in `~/.hermes/data/kospi_forecast/` (override with `KOSPI_FORECAST_DIR`), both append-only:
+`predictions.jsonl` (last record per date wins; records without `p_model` are ignored) and
+`actuals.jsonl` (realised close + `chg`, appended by the collector for every finished forecast date;
+falls back to the Naver daily chart beyond the price endpoint's ~25-session window). The scorecard
+reads the stored actuals, so it stays cumulative.
+
+Track record: on the publisher's machine the data dir is a clone of the repo's `data` branch with
+`git config kospi.push true`; `kospi_record.py` commits both files and pushes after each record (git
+errors only warn). `install.sh --with-history` seeds an empty data dir from that branch (no push).
 
 ## Data sources (verified 2026-10)
 
@@ -113,8 +134,12 @@ ignored).
 - Naver/Daum per-stock prices and theme rates after 15:30 are KRX+NXT integrated last prices (NXT
   after-market runs to 20:00), not the KRX close (e.g. 207,500 vs KRX 210,000). KRX close comes from
   Daum `/api/quote/A{code}/days?...perPage=1`; the script uses it for top-10 rows (`KRX종가`).
-- Manual test runs of the cron job write to the real prediction log even when told otherwise —
-  delete the test record from `predictions.jsonl` afterwards.
+- Manual test runs of the cron job write to the real prediction log even when told otherwise — and
+  the record step pushes it to the public `data` branch. Test the scripts with `KOSPI_FORECAST_DIR`
+  set to a scratch dir instead; if a test record lands anyway, `git revert` it in the data dir and push.
+- Under a Hermes profile (`HERMES_HOME=~/.hermes/profiles/<p>`), install.sh copies scripts to the
+  profile's `scripts/`, but the cron prompt calls `~/.hermes/scripts/kospi_record.py` — also copy
+  the scripts there after every install.
 - Naver `.RUT` is unsupported (409).
 - US market-index quotes (bonds, DXY, futures) are live at fetch time, not the US close — say "현재".
 - Holiday table `KRX_HOLIDAYS` in the script runs through 2027; the script warns when it expires.

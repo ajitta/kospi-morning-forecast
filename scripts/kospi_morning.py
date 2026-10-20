@@ -21,6 +21,7 @@ KST = timezone(timedelta(hours=9))
 UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
 DATA_DIR = os.environ.get("KOSPI_FORECAST_DIR", os.path.expanduser("~/.hermes/data/kospi_forecast"))
 PRED_FILE = os.path.join(DATA_DIR, "predictions.jsonl")
+ACT_FILE = os.path.join(DATA_DIR, "actuals.jsonl")  # realised KOSPI close per forecast date (append-only)
 
 # KRX weekday closures. 2027 list = official public holidays (월력요항) + 12/31;
 # KRX may add ad-hoc closures (elections, temporary holidays) — update when announced.
@@ -407,26 +408,72 @@ def main():
             P(f"- {e}")
 
 
+def _read_jsonl(path):
+    out = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return out
+
+
+def update_actuals(pred_dates, kospi_hist):
+    """Append the realised close-to-close KOSPI change for every forecast date that has finished
+    and isn't in actuals.jsonl yet. Persisting it keeps the scorecard cumulative (the price
+    endpoint only reaches ~25 sessions back) and makes the data files a self-contained track record."""
+    have = {a["date"]: a for a in _read_jsonl(ACT_FILE) if "chg" in a}
+    finished = {r["localTradedAt"][:10]: r for r in kospi_hist}
+    last = max(finished) if finished else None
+    missing = [d for d in pred_dates if d not in have and last and d <= last]
+    if not missing:
+        return have
+    new = {}
+    for d in missing:
+        if d in finished:
+            r = finished[d]
+            new[d] = {"close": num(r["closePrice"]), "chg": num(r["fluctuationsRatio"]), "src": "naver/index/price"}
+    older = [d for d in missing if d not in new]
+    if older:  # beyond the price endpoint's window (e.g. cron was down for weeks) — use the daily chart
+        start = (date.fromisoformat(min(older)) - timedelta(days=14)).strftime("%Y%m%d")
+        rows = get(f"https://api.stock.naver.com/chart/domestic/index/KOSPI/day?startDateTime={start}0000"
+                   f"&endDateTime={last.replace('-', '')}2359")
+        closes = sorted((f"{r['localDate'][:4]}-{r['localDate'][4:6]}-{r['localDate'][6:]}", r["closePrice"]) for r in rows)
+        for (_, c0), (d1, c1) in zip(closes, closes[1:]):
+            if d1 in older:
+                new[d1] = {"close": c1, "chg": round((c1 / c0 - 1) * 100, 2), "src": "naver/chart/day"}
+    if new:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        ts = datetime.now(timezone.utc).isoformat()
+        with open(ACT_FILE, "a", encoding="utf-8") as f:
+            for d in sorted(new):
+                rec = {"date": d, **new[d], "recorded_at": ts}
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                have[d] = rec
+    return have
+
+
 def scorecard(kospi_hist):
     if not os.path.exists(PRED_FILE):
         return "- 기록된 예측 없음 (첫 실행)"
-    actual = {r["localTradedAt"][:10]: r for r in kospi_hist}
     by_date = {}
-    with open(PRED_FILE, encoding="utf-8") as f:
-        for line in f:
-            try:
-                p = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "p_model" in p:  # current schema only
-                by_date[p["date"]] = p  # last record per date wins
+    for p in _read_jsonl(PRED_FILE):
+        if "p_model" in p:  # current schema only
+            by_date[p["date"]] = p  # last record per date wins
+    try:
+        actual = update_actuals(sorted(by_date), kospi_hist)
+    except Exception as e:  # noqa: BLE001 — fall back to what is already stored
+        print(f"!! 실제 등락 저장 실패: {type(e).__name__}: {e}")
+        actual = {a["date"]: a for a in _read_jsonl(ACT_FILE) if "chg" in a}
     rows = []
     for d in sorted(by_date):
         a = actual.get(d)
         if not a:
             continue
         p = by_date[d]
-        chg = num(a["fluctuationsRatio"])
+        chg = a["chg"]
         up = 1 if chg > 0 else 0
         pm, pf = p["p_model"] / 100, p["p_final"] / 100
         rows.append({"d": d, "p": p, "chg": chg, "up": up,
