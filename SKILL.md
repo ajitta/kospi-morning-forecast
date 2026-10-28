@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.1.0
+version: 1.2.0
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -21,17 +21,34 @@ direction forecast that is recorded and scored the next day. KOSPI only — KOSD
 ## Install / share / release
 
 Bundled files: `scripts/kospi_morning.py` (collector, cron `script=`), `scripts/kospi_model.py`
-(baseline), `scripts/kospi_record.py` (forecast log), `references/cron-prompt.md` (job prompt).
-`bash scripts/install.sh [--cron <deliver>]` copies the scripts to `~/.hermes/scripts/` (cron
-scripts must live there), smoke-tests the live data path, and optionally creates the weekday
-08:00 KST job (schedule translated from Hermes' timezone).
+(baseline), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
+(after-close snapshot, `--no-agent` cron job), `references/cron-prompt.md` (job prompt).
+`bash scripts/install.sh [--cron [<deliver>]] [--snapshot-cron [<deliver>]] [--with-history]` copies the
+scripts to `$HERMES_HOME/scripts/` (cron scripts must live there), smoke-tests the live data path,
+optionally seeds the forecast log from the `data` branch, and optionally creates the weekday 08:00 KST
+briefing job plus the 16:10/20:10 KST snapshot job (`--snapshot-cron` adds only the latter, for upgrades).
 
 Canonical source is the public repo `ajitta/kospi-morning-forecast` (working copy
-`~/work/kospi-morning-forecast`). Every change ships as: edit the working copy → run
-`bash scripts/install.sh` (syncs `~/.hermes/scripts/` + this skill dir) → bump `version:` in SKILL.md
-→ commit, tag `vX.Y.Z`, push, `gh release create` with a one-line changelog. If the cron prompt
-changes, update `references/cron-prompt.md` and the live job together. General sharing procedure:
-`hermes-agent-skill-authoring` → `references/sharing-user-skills.md`.
+`~/work/kospi-morning-forecast`). Every change ships as:
+1. `git fetch && git status` in the working copy, rebase onto `origin/main` if behind — main gets
+   commits from elsewhere (GitHub web edits, other sessions); tagging before the rebase leaves the tag
+   on an orphaned commit.
+2. `diff SKILL.md <this skill dir>/SKILL.md` — this installed copy gets patched directly (skill
+   reviews), and install.sh overwrites it from the working copy, silently discarding those edits.
+   Copy installed-only changes into the working copy first.
+3. Edit the working copy; test with `KOSPI_FORECAST_DIR=<scratch>` (never the real data dir).
+4. `bash scripts/install.sh`, then also `cp scripts/kospi_*.py ~/.hermes/scripts/` (see profile pitfall).
+5. Bump `version:` → commit → push main → tag `vX.Y.Z` on the pushed HEAD and push the tag →
+   `gh release create` with a one-line Korean changelog. Push main and tag as separate steps and
+   stop on the first failure; a chained `&&` that pushes the tag before a rejected main push
+   publishes a tag for an unpublished commit.
+If the cron prompt changes, update `references/cron-prompt.md` and the live job together. General
+sharing procedure: `hermes-agent-skill-authoring` → `references/sharing-user-skills.md`.
+
+Persisted state is deliberately minimal: the model refits from live Naver history (since 2016) on
+every run, so a fresh install reproduces model + backtest exactly; only the forecast log and the
+realised outcomes (not re-fetchable as a long series from the windowed price endpoint) are stored.
+When adding a feature, persist only what can't be re-fetched.
 
 ## Always-on rules
 
@@ -56,7 +73,9 @@ changes, update `references/cron-prompt.md` and the live job together. General s
 ## Procedure
 
 1. Read the injected data block (`~/.hermes/scripts/kospi_morning.py` output). Note `!!` lines and
-   the `수집 오류` section — those items are 데이터 수집 실패.
+   the `수집 오류` section — those items are 데이터 수집 실패. `[전일 스냅샷 HH:MM]` tags mark data
+   saved after yesterday's close — it is the previous session's data, use it as such. Top-10 lists
+   whose header says `전부 ≈` are estimates from per-stock investor days — keep the `≈`.
 2. Web-search (Korean sources first): overnight US close wrap (`뉴욕증시 마감 {날짜}`), key US
    macro/earnings events, options flows (rule above), and news for the largest top-10 names.
    Also check today's scheduled events (Korean/US data releases, 옵션 만기일, FOMC, big earnings).
@@ -108,9 +127,11 @@ adjustments helped (Brier final vs baseline). If adjustments keep hurting, adjus
 
 Files in `~/.hermes/data/kospi_forecast/` (override with `KOSPI_FORECAST_DIR`), both append-only:
 `predictions.jsonl` (last record per date wins; records without `p_model` are ignored) and
-`actuals.jsonl` (realised close + `chg`, appended by the collector for every finished forecast date;
-falls back to the Naver daily chart beyond the price endpoint's ~25-session window). The scorecard
-reads the stored actuals, so it stays cumulative.
+`actuals.jsonl` (realised close + `chg` from the Naver daily chart, appended by the collector for every
+finished forecast date — the 08:00 run scores yesterday's forecast). The scorecard reads the stored
+actuals, so it stays cumulative. `snapshots/<session>.json` (written by `kospi_snapshot.py`, override
+with `KOSPI_SNAPSHOT_DIR`) holds program/breadth/sector/theme data for one session; it is git-ignored
+and not part of the track record.
 
 Track record: on the publisher's machine the data dir is a clone of the repo's `data` branch with
 `git config kospi.push true`; `kospi_record.py` commits both files and pushes after each record (git
@@ -118,25 +139,44 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
 
 ## Data sources (verified 2026-10)
 
-- Naver mobile JSON (`m.stock.naver.com/api/...`, `api.stock.naver.com/...`): KOSPI price/integration
-  (investor + program totals), FUT integration, themes, per-stock `trend`, US indices/stocks/futures,
-  market indices (bonds, DXY, FX, oil, gold).
+- Naver mobile JSON (`m.stock.naver.com/api/...`, `api.stock.naver.com/...`): KOSPI/KPI200 daily chart
+  (`chart/domestic/index/{code}/day`, session source of truth), integration (program, breadth), FUT
+  integration, themes, market-cap list, US indices/stocks/futures, market indices (bonds, DXY, FX, oil, gold).
 - Daum (`finance.daum.net/api/...`, needs `Referer: https://finance.daum.net/`): investor days with
-  detail breakdown, futures days (investor contracts + open interest), investor top lists, sectors.
+  detail breakdown, futures days (investor contracts + open interest), investor top lists (with
+  `fromDate`/`toDate`), per-stock investor days (`/api/investor/days?symbolCode=A{code}`), sectors.
 
 ## Pitfalls
 
+- **Before the open, session-day endpoints are already reset — the 08:00 run can't re-fetch yesterday's
+  program, breadth, sector or theme data** (integration `programTrendInfo.bizdate` = None, sectors empty,
+  theme rates = pre-market). That's why `kospi_snapshot.py` saves them after the close. If the morning
+  block says `스냅샷 없음`, check the `KOSPI 장마감 스냅샷` job (`hermes cron list`).
+- `m.stock.naver.com/api/index/KOSPI/price` drops the previous session before the open (10/28 08:00:
+  newest row 10/26). It made every "last session" a day stale — wrong scoring date, US sessions
+  double-counted, top-10 KRX close mismatch. Take the session date from the daily chart, never from it.
+- Daum's investor top list ignores date params and its window moves: at 08:00 it sums the last TWO
+  sessions (10/28 08:00 = 10/26+10/27: LIG 241+253 → 502억), after the close it still shows the previous
+  session. Use it only when `fromDate == toDate == last session`; the script otherwise ranks ~370
+  market-cap stocks from per-stock investor days × session VWAP (matches the list within ~1%).
+- Before the open Daum futures days already list today's row as a copy of the last session — drop rows
+  dated after the last session or 5/20-day sums double-count a day.
 - Legacy `finance.naver.com/sise/*.naver` pages are discontinued ("더 이상 제공되지 않습니다").
 - KRX data portal JSON now returns `LOGOUT` without login; Yahoo chart API rate-limits cloud IPs (429);
   stooq CSV endpoint is gone. Don't fall back to them.
 - Daum investor top list is hard-capped at 30 rows including ETFs; the script fills gaps from the
-  KOSPI top-200 market-cap universe using Naver per-stock trend (estimates).
+  market-cap universe (estimates, `≈`). Per-stock investor data for a session appears overnight, so an
+  evening test run shows the top-10 lists as 수집 실패 — that's expected.
 - Naver/Daum per-stock prices and theme rates after 15:30 are KRX+NXT integrated last prices (NXT
   after-market runs to 20:00), not the KRX close (e.g. 207,500 vs KRX 210,000). KRX close comes from
   Daum `/api/quote/A{code}/days?...perPage=1`; the script uses it for top-10 rows (`KRX종가`).
 - Manual test runs of the cron job write to the real prediction log even when told otherwise — and
-  the record step pushes it to the public `data` branch. Test the scripts with `KOSPI_FORECAST_DIR`
-  set to a scratch dir instead; if a test record lands anyway, `git revert` it in the data dir and push.
+  the record step pushes it to the public `data` branch. Test the scripts directly with
+  `KOSPI_FORECAST_DIR=<scratch> python3 ~/.hermes/scripts/kospi_morning.py --force` (`--force` ignores
+  the holiday gate); if a test record lands in the real log anyway, `git revert` it in the data dir and push.
+- Never score from a windowed endpoint: `m.stock.naver.com/api/index/KOSPI/price` caps at ~60 rows
+  (`pageSize>60` returns non-JSON), so anything older silently drops out of a "cumulative" stat.
+  Store the outcome once, or use the `chart/.../day` series for long ranges.
 - Under a Hermes profile (`HERMES_HOME=~/.hermes/profiles/<p>`), install.sh copies scripts to the
   profile's `scripts/`, but the cron prompt calls `~/.hermes/scripts/kospi_record.py` — also copy
   the scripts there after every install.
@@ -144,5 +184,3 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
 - US market-index quotes (bonds, DXY, futures) are live at fetch time, not the US close — say "현재".
 - Holiday table `KRX_HOLIDAYS` in the script runs through 2027; the script warns when it expires.
   KRX can add ad-hoc closures (elections, temporary holidays) — add them when announced.
-- Test runs: `python3 ~/.hermes/scripts/kospi_morning.py --force` (ignores the holiday gate);
-  set `KOSPI_FORECAST_DIR` to a scratch dir to avoid polluting the real prediction log.

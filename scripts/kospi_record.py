@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 PRED_FILE = os.path.join(os.environ.get("KOSPI_FORECAST_DIR", os.path.expanduser("~/.hermes/data/kospi_forecast")), "predictions.jsonl")
 MAX_ADJ = 10
+MAX_TEXT = 1000  # was 200: real adjustment reasons ran 200-300 chars and were cut mid-sentence
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--p-model", type=float, required=True, help="통계 기준 P(상승) %%")
@@ -38,10 +39,13 @@ if a.p_final != a.p_model and not a.adj_reason.strip():
     raise SystemExit("--adj-reason is required when p-final differs from p-model")
 if a.low > a.high:
     a.low, a.high = a.high, a.low
+for name, val in (("adj-reason", a.adj_reason), ("thesis", a.thesis)):
+    if len(val) > MAX_TEXT:
+        print(f"warning: --{name} truncated to {MAX_TEXT} chars ({len(val)} given)")
 os.makedirs(os.path.dirname(PRED_FILE), exist_ok=True)
 rec = {"date": a.date, "p_model": a.p_model, "p_final": a.p_final,
        "direction": "상승" if a.p_final >= 50 else "하락", "low": a.low, "high": a.high,
-       "adj_reason": a.adj_reason[:200], "thesis": a.thesis[:200],
+       "adj_reason": a.adj_reason[:MAX_TEXT], "thesis": a.thesis[:MAX_TEXT],
        "recorded_at": datetime.now(timezone.utc).isoformat()}
 with open(PRED_FILE, "a", encoding="utf-8") as f:
     f.write(json.dumps(rec, ensure_ascii=False) + "\n")

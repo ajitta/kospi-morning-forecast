@@ -19,10 +19,11 @@
 ```bash
 git clone https://github.com/ajitta/kospi-morning-forecast.git && cd kospi-morning-forecast
 bash scripts/install.sh                  # 스킬과 스크립트 설치 + 동작 확인
-bash scripts/install.sh --cron telegram  # 예약 작업까지 생성 (전달 대상: origin|local|telegram|...)
+bash scripts/install.sh --cron telegram  # 예약 작업까지 생성: 08:00 브리핑 + 장 마감 후 스냅샷 (전달 대상: origin|local|telegram|...)
 bash scripts/install.sh --with-history   # (선택) 운영 중인 예측 기록을 받아 성적표에 채움
 ```
 - 업데이트: `git pull && bash scripts/install.sh` (예약 작업은 그대로 유지되고 스크립트만 교체됨)
+  - v1.1 이하에서 올리는 경우 한 번만: `bash scripts/install.sh --snapshot-cron telegram` (스냅샷 작업 추가)
 - 예약 시각은 Hermes에 설정된 시간대를 따릅니다. `config.yaml`에 `timezone: Asia/Seoul`로 두는 것을 권장합니다. UTC 서버라면 설치 스크립트가 자동으로 23:00(일~목)으로 바꿔 등록합니다.
 - 바로 한 번 실행해 보려면: `hermes cron list`로 job id를 확인한 뒤 `hermes cron run <id>`
 - 데이터만 확인하려면: `python3 ~/.hermes/scripts/kospi_morning.py --force`
@@ -37,6 +38,9 @@ bash scripts/install.sh --with-history   # (선택) 운영 중인 예측 기록�
   - 68% 예상 범위: 과거 예측 오차 분포 × 현재 KOSPI 변동성
   - 2016년 이후 데이터로 매 실행 때마다 다시 학습하고, 2019년 이후 구간으로 성능을 검증함
 - `scripts/kospi_record.py`: 예측 기록. AI의 조정은 ±10%p까지만 허용하고 조정 사유가 필수
+- `scripts/kospi_snapshot.py`: 평일 16:10·20:10에 LLM 없이 도는 스크립트 작업
+  - 프로그램 매매, 거래대금·등락종목, 업종별 수급, 테마 등락은 포털이 다음 날 장 시작 전에 초기화해서 08:00에는 다시 받을 수 없음
+  - 그래서 장 마감 후 `snapshots/<날짜>.json`에 저장해 두고 다음 날 아침 브리핑이 읽음. 정상이면 아무 메시지도 보내지 않음
 - 예측 기록: `~/.hermes/data/kospi_forecast/`
   - `predictions.jsonl`: 장전 예측
   - `actuals.jsonl`: 다음 날 수집 스크립트가 채우는 실제 종가·등락률. 두 파일 모두 추가만 함

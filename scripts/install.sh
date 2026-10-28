@@ -2,8 +2,9 @@
 # Install the KOSPI morning forecast skill + scripts into Hermes and (optionally) schedule it.
 #
 #   bash scripts/install.sh                 # install skill + scripts only
-#   bash scripts/install.sh --cron          # also create the weekday 08:00 KST cron job (delivers to home channel)
+#   bash scripts/install.sh --cron          # also create the weekday 08:00 KST briefing job + the after-close snapshot job
 #   bash scripts/install.sh --cron telegram # pick a delivery target (origin|local|telegram|discord|platform:chat_id)
+#   bash scripts/install.sh --snapshot-cron # upgrading from <=1.1: add only the after-close snapshot job
 #   bash scripts/install.sh --with-history  # also seed the forecast log from the repo's `data` branch
 set -euo pipefail
 
@@ -14,10 +15,11 @@ SKILL_DIR="$HERMES_HOME/skills/research/kospi-morning-forecast"
 DATA_DIR="${KOSPI_FORECAST_DIR:-$HOME/.hermes/data/kospi_forecast}"
 DATA_REPO="${KOSPI_DATA_REPO:-https://github.com/ajitta/kospi-morning-forecast.git}"
 
-CRON=0; DELIVER=origin; HISTORY=0
+CRON=0; SNAPCRON=0; DELIVER=origin; HISTORY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cron) CRON=1; if [[ $# -gt 1 && "$2" != --* ]]; then DELIVER="$2"; shift; fi ;;
+    --cron) CRON=1; SNAPCRON=1; if [[ $# -gt 1 && "$2" != --* ]]; then DELIVER="$2"; shift; fi ;;
+    --snapshot-cron) SNAPCRON=1; if [[ $# -gt 1 && "$2" != --* ]]; then DELIVER="$2"; shift; fi ;;
     --with-history) HISTORY=1 ;;
     *) echo "unknown option: $1"; exit 1 ;;
   esac
@@ -31,9 +33,10 @@ mkdir -p "$SKILL_DIR" "$HERMES_HOME/scripts" "$DATA_DIR"
 cp -r "$SRC/SKILL.md" "$SRC/references" "$SKILL_DIR/"
 mkdir -p "$SKILL_DIR/scripts"
 cp "$SRC"/scripts/*.py "$SRC/scripts/install.sh" "$SKILL_DIR/scripts/"
-cp "$SRC"/scripts/kospi_morning.py "$SRC"/scripts/kospi_model.py "$SRC"/scripts/kospi_record.py "$HERMES_HOME/scripts/"
+cp "$SRC"/scripts/kospi_morning.py "$SRC"/scripts/kospi_model.py "$SRC"/scripts/kospi_record.py \
+   "$SRC"/scripts/kospi_snapshot.py "$HERMES_HOME/scripts/"
 echo "✓ skill   → $SKILL_DIR"
-echo "✓ scripts → $HERMES_HOME/scripts/kospi_{morning,model,record}.py"
+echo "✓ scripts → $HERMES_HOME/scripts/kospi_{morning,model,record,snapshot}.py"
 
 echo "… smoke test (fetches live data, ~5s)"
 if KOSPI_FORECAST_DIR="$(mktemp -d)" python3 "$HERMES_HOME/scripts/kospi_morning.py" --force | grep -q "기준 상승확률 P(up)"; then
@@ -56,7 +59,7 @@ if [[ $HISTORY == 1 ]]; then
   fi
 fi
 
-if [[ $CRON == 1 ]]; then
+if [[ $CRON == 1 || $SNAPCRON == 1 ]]; then
   # Cron schedules use Hermes' timezone (HERMES_TIMEZONE / `timezone:` in config.yaml / server local).
   TZNAME="$(python3 - <<'EOF'
 import os, re
@@ -72,12 +75,24 @@ print(tz)
 EOF
 )"
   case "$TZNAME" in
-    Asia/Seoul|Asia/Tokyo|local:+0900) SCHED="0 8 * * 1-5" ;;
-    UTC|Etc/UTC|local:+0000) SCHED="0 23 * * 0-4" ;;
+    Asia/Seoul|Asia/Tokyo|local:+0900) SCHED="0 8 * * 1-5"; SNAP_SCHED="10 16,20 * * 1-5" ;;
+    UTC|Etc/UTC|local:+0000) SCHED="0 23 * * 0-4"; SNAP_SCHED="10 7,11 * * 1-5" ;;
     *) echo "! Hermes timezone is '$TZNAME'. Set it to Asia/Seoul (timezone: Asia/Seoul in config.yaml)"
        echo "  or create the job manually with a schedule equal to 08:00 KST on weekdays."; exit 1 ;;
   esac
-  hermes cron create "$SCHED" "$(cat "$SRC/references/cron-prompt.md")" \
-    --name "KOSPI 모닝 전망" --skill kospi-morning-forecast --script kospi_morning.py --deliver "$DELIVER"
-  echo "✓ cron job created ($SCHED, tz=$TZNAME, deliver=$DELIVER). Check: hermes cron list"
+  if [[ $CRON == 1 ]]; then
+    hermes cron create "$SCHED" "$(cat "$SRC/references/cron-prompt.md")" \
+      --name "KOSPI 모닝 전망" --skill kospi-morning-forecast --script kospi_morning.py --deliver "$DELIVER"
+    echo "✓ briefing job created ($SCHED, tz=$TZNAME, deliver=$DELIVER)"
+  fi
+  # Program / breadth / sector / theme data is wiped by the portals before the next open, so a
+  # script-only job saves it after the close (16:10 KST, retried 20:10). Silent unless incomplete.
+  if hermes cron list 2>/dev/null | grep -q "KOSPI 장마감 스냅샷"; then
+    echo "✓ snapshot job already exists"
+  else
+    hermes cron create "$SNAP_SCHED" --no-agent --script kospi_snapshot.py \
+      --name "KOSPI 장마감 스냅샷" --deliver "$DELIVER"
+    echo "✓ snapshot job created ($SNAP_SCHED, tz=$TZNAME, deliver=$DELIVER for warnings only)"
+  fi
+  echo "  Check: hermes cron list"
 fi
