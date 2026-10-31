@@ -516,6 +516,14 @@ def main():
     P("- 금리/환율/원자재(현재): " + ", ".join(
         f"{n} {d.get('closePrice')} ({d.get('fluctuations')}, {d.get('fluctuationsRatio')}%)" for (p, n), d in zip(MARKET_INDEX, mis) if d))
 
+    # ---------------------------------------------------- US rates & credit
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import kospi_rates
+        P(kospi_rates.section(since))
+    except Exception as e:  # noqa: BLE001
+        P(f"\n## 8-1. 미국 국채 금리·회사채 신용\n- !! 수집 실패: {type(e).__name__}: {e}")
+
     # ---------------------------------------------------- statistical baseline
     P("\n## 0. 통계 기준 예측 (예측 확률·범위의 출발점 — 이 값에서 ±10%p 이내로만 조정)")
     try:

@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.2.0
+version: 1.3.0
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -21,7 +21,7 @@ direction forecast that is recorded and scored the next day. KOSPI only — KOSD
 ## Install / share / release
 
 Bundled files: `scripts/kospi_morning.py` (collector, cron `script=`), `scripts/kospi_model.py`
-(baseline), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
+(baseline), `scripts/kospi_rates.py` (US Treasury + credit block), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
 (after-close snapshot, `--no-agent` cron job), `references/cron-prompt.md` (job prompt).
 `bash scripts/install.sh [--cron [<deliver>]] [--snapshot-cron [<deliver>]] [--with-history]` copies the
 scripts to `$HERMES_HOME/scripts/` (cron scripts must live there), smoke-tests the live data path,
@@ -33,10 +33,12 @@ Canonical source is the public repo `ajitta/kospi-morning-forecast` (working cop
 1. `git fetch && git status` in the working copy, rebase onto `origin/main` if behind — main gets
    commits from elsewhere (GitHub web edits, other sessions); tagging before the rebase leaves the tag
    on an orphaned commit.
-2. `diff SKILL.md <this skill dir>/SKILL.md` — this installed copy gets patched directly (skill
-   reviews), and install.sh overwrites it from the working copy, silently discarding those edits.
-   Copy installed-only changes into the working copy first.
-3. Edit the working copy; test with `KOSPI_FORECAST_DIR=<scratch>` (never the real data dir).
+2. `diff -r --exclude=__pycache__ . <this skill dir>` (SKILL.md *and* references/) — this installed copy
+   gets patched directly (skill reviews), and install.sh overwrites it from the working copy, silently
+   discarding those edits. Copy installed-only changes into the working copy first.
+3. Edit the working copy; test with `KOSPI_FORECAST_DIR=<scratch>` (never the real data dir). Anything
+   that depends on time of day (pre-open resets, today's row, snapshot gating) must be tested with a
+   faked clock, not just a run "now" — recipe and run-audit procedure in `references/maintenance-audit.md`.
 4. `bash scripts/install.sh`, then also `cp scripts/kospi_*.py ~/.hermes/scripts/` (see profile pitfall).
 5. Bump `version:` → commit → push main → tag `vX.Y.Z` on the pushed HEAD and push the tag →
    `gh release create` with a one-line Korean changelog. Push main and tag as separate steps and
@@ -82,7 +84,13 @@ When adding a feature, persist only what can't be re-fetched.
 3. Write the report in this order:
    1. 한 줄 결론: 오늘 KOSPI 방향 · 최종 P(상승) (기준 X% → 최종 Y%) · 68% 범위
    2. 전일 예측 채점 (scorecard section; one line on why it hit/missed)
-   3. 미국 시장 (indices per session, semis, rates/FX/oil, futures now, top headlines with sources)
+   3. 미국 시장 (indices per session, semis, FX/oil, futures now, top headlines with sources)
+      - 금리·신용 (section `8-1`): 국채 3M/2Y/10Y/30Y 수준·변화(bp)와 크기 판정, 커브 형태(불/베어
+        스티프닝·플래트닝, 역전 여부), 신용 스프레드 수준(1년 백분위)·변화, 회사채 ETF의 국채 대비
+        초과수익, 조합 판정 → **평가·해석 2–3줄**: 무엇이 움직였나(단기물 vs 장기물, 금리 vs 신용) →
+        KOSPI 경로(미 금리·달러 → 원/달러·외국인 수급; 장기금리 → 반도체·성장주 밸류에이션; 신용
+        확대 → 글로벌 위험회피) → 확률 영향은 `## 0`의 '금리·신용 반영 여부' 줄 그대로(HYG는 기준치에
+        이미 반영, 금리·스프레드 변화 자체로는 조정 없음). 'z별 KOSPI' 구간 통계는 "표본 내 집계"로만 인용.
    4. 전일 KOSPI 수급: 현물(외/기/개, 기관 세부, 5·20일 누적, 연속일), 선물(계약, 미결제 변화,
       누적 = 포지션 방향), 옵션 [기사 기반], 프로그램(차익/비차익)
    5. 강세/약세 테마 + 업종 수급, and what they imply for today
@@ -96,11 +104,14 @@ When adding a feature, persist only what can't be re-fetched.
 ## Forecast rules
 
 Baseline (`~/.hermes/scripts/kospi_model.py`): logistic regression of "KOSPI closes up" on the
-overnight SOX and Nasdaq-100 returns (each ÷ its 20-day vol), US sessions since the last KRX close
-compounded; 68% range = OLS on vol-scaled KOSPI return + empirical residual 16/84 percentiles ×
-current KOSPI 20-day vol. Walk-forward 2019–2026 out-of-sample: direction 64% vs 55.5% always-up,
-Brier 0.222 vs 0.247 base rate, well calibrated, 68% range covered 65.5%. Foreign spot flow and the
-previous day's KOSPI move were tested and added nothing — don't re-add them as adjustment reasons.
+overnight SOX, Nasdaq-100 and HYG (US high-yield corporate bond ETF) returns (each ÷ its 20-day vol),
+US sessions since the last KRX close compounded; 68% range = OLS on vol-scaled KOSPI return +
+empirical residual 16/84 percentiles × current KOSPI 20-day vol. Walk-forward 2019–2026
+out-of-sample: direction 65.3% vs 55.5% always-up, Brier 0.2184 vs 0.247 base rate (SOX/NDX only:
+64%, 0.2223), well calibrated, 68% range covered 66.6%. HYG passed the feature rule (paired t −3.8,
+both 2019–22 and 2023–26 halves). Tested and rejected: foreign spot flow, previous day's KOSPI move,
+Treasury moves alone (IEF t −1.0; US10Y change 2023–26 t −0.8), HY-minus-Treasury credit-only
+return (t +0.2) — don't re-add any of them as adjustment reasons.
 
 Changing the baseline: add a feature only if it improves walk-forward (refit every 40 days, test from
 2019) Brier over the current model, and update the numbers quoted above and in the README. History
@@ -114,7 +125,8 @@ information the model can't see, and name it with a number + source:
   between what night futures imply and what the baseline implies)
 - material news/earnings released after the US close or Korea pre-open events (data releases, policy)
 - one-off regime facts (circuit-breaker day, holiday gap of several sessions, option expiry)
-Never adjust for the US index moves themselves, foreign flows, "oversold" or general mood. No clear
+Never adjust for the US index moves themselves, Treasury yield / curve / credit-spread moves (HYG is
+in the model, the rest tested null), foreign flows, "oversold" or general mood. No clear
 reason → adjust 0. The range is the model's — don't widen or narrow it. Say plainly that the 68%
 range misses about one day in three and tail days (e.g. 2026-10-15 −7.57% vs range −3.6~+0.2) will fall
 outside.
@@ -142,6 +154,10 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
 - Naver mobile JSON (`m.stock.naver.com/api/...`, `api.stock.naver.com/...`): KOSPI/KPI200 daily chart
   (`chart/domestic/index/{code}/day`, session source of truth), integration (program, breadth), FUT
   integration, themes, market-cap list, US indices/stocks/futures, market indices (bonds, DXY, FX, oil, gold).
+- US rates/credit: Naver `api.stock.naver.com/marketindex/bond/{US3MT|US2YT|US10YT|US30YT}=RR/prices`
+  (`pageSize` ≤ 60, ~13 pages ≈ 3 years, rows settle 17:05 ET); ETF daily since 2016 from
+  `chart/foreign/item/{HYG|LQD|IEF.O}/day` + `stock/{code}/price`; CNN fear & greed
+  `junk_bond_demand` raw = HY − IG yield spread (%p, ~1 year).
 - Daum (`finance.daum.net/api/...`, needs `Referer: https://finance.daum.net/`): investor days with
   detail breakdown, futures days (investor contracts + open interest), investor top lists (with
   `fromDate`/`toDate`), per-stock investor days (`/api/investor/days?symbolCode=A{code}`), sectors.
@@ -152,13 +168,14 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   program, breadth, sector or theme data** (integration `programTrendInfo.bizdate` = None, sectors empty,
   theme rates = pre-market). That's why `kospi_snapshot.py` saves them after the close. If the morning
   block says `스냅샷 없음`, check the `KOSPI 장마감 스냅샷` job (`hermes cron list`).
-- `m.stock.naver.com/api/index/KOSPI/price` drops the previous session before the open (10/28 08:00:
-  newest row 10/26). It made every "last session" a day stale — wrong scoring date, US sessions
-  double-counted, top-10 KRX close mismatch. Take the session date from the daily chart, never from it.
-- Daum's investor top list ignores date params and its window moves: at 08:00 it sums the last TWO
-  sessions (10/28 08:00 = 10/26+10/27: LIG 241+253 → 502억), after the close it still shows the previous
-  session. Use it only when `fromDate == toDate == last session`; the script otherwise ranks ~370
-  market-cap stocks from per-stock investor days × session VWAP (matches the list within ~1%).
+- Take the last-session date from the daily chart (`chart/domestic/index/KOSPI/day`), never from
+  `m.stock.naver.com/api/index/KOSPI/price` — before the open that endpoint has dropped the previous
+  session, and a stale session date cascades: scoring a day late, US sessions double-counted, top-10
+  KRX-close lookups missing.
+- Daum's investor top list ignores date params and its window moves (before the open it sums the last
+  two sessions; after the close it still shows the previous one). Use it only when
+  `fromDate == toDate == last session`; otherwise the script ranks ~370 market-cap stocks from per-stock
+  investor days × session VWAP (agrees with the list within ~1%).
 - Before the open Daum futures days already list today's row as a copy of the last session — drop rows
   dated after the last session or 5/20-day sums double-count a day.
 - Legacy `finance.naver.com/sise/*.naver` pages are discontinued ("더 이상 제공되지 않습니다").
@@ -169,18 +186,26 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   evening test run shows the top-10 lists as 수집 실패 — that's expected.
 - Naver/Daum per-stock prices and theme rates after 15:30 are KRX+NXT integrated last prices (NXT
   after-market runs to 20:00), not the KRX close (e.g. 207,500 vs KRX 210,000). KRX close comes from
-  Daum `/api/quote/A{code}/days?...perPage=1`; the script uses it for top-10 rows (`KRX종가`).
+  Daum `/api/quote/A{code}/days` — pick the row whose date equals the last session (before the open the
+  newest row is already today's), as the script does for top-10 rows (`KRX종가`).
 - Manual test runs of the cron job write to the real prediction log even when told otherwise — and
   the record step pushes it to the public `data` branch. Test the scripts directly with
   `KOSPI_FORECAST_DIR=<scratch> python3 ~/.hermes/scripts/kospi_morning.py --force` (`--force` ignores
   the holiday gate); if a test record lands in the real log anyway, `git revert` it in the data dir and push.
+- `hermes cron run <id>` executes in the calling shell's environment: an exported `KOSPI_FORECAST_DIR`
+  / `KOSPI_SNAPSHOT_DIR` from testing redirects the real job's writes to scratch while it reports
+  "succeeded". `unset` them before triggering a job, then check the file landed in the real data dir.
 - Never score from a windowed endpoint: `m.stock.naver.com/api/index/KOSPI/price` caps at ~60 rows
   (`pageSize>60` returns non-JSON), so anything older silently drops out of a "cumulative" stat.
   Store the outcome once, or use the `chart/.../day` series for long ranges.
 - Under a Hermes profile (`HERMES_HOME=~/.hermes/profiles/<p>`), install.sh copies scripts to the
   profile's `scripts/`, but the cron prompt calls `~/.hermes/scripts/kospi_record.py` — also copy
   the scripts there after every install.
-- Naver `.RUT` is unsupported (409).
+- Naver `.RUT` is unsupported (409). Treasury ETF code is `IEF.O` (`IEF` → 409/empty); `HYG`, `LQD` work bare.
+- FRED (`fred.stlouisfed.org`, ICE BofA OAS, DGS10) silently drops connections from this cloud IP;
+  `api.stlouisfed.org` works only with an API key. Hence Naver yields + CNN spread + ETF proxies.
+- HYG/LQD chart closes are not dividend-adjusted: each monthly ex-dividend day shows ≈ −0.3~0.5%
+  that isn't a credit move. Check the date before calling a small HYG drop a credit signal.
 - US market-index quotes (bonds, DXY, futures) are live at fetch time, not the US close — say "현재".
 - Holiday table `KRX_HOLIDAYS` in the script runs through 2027; the script warns when it expires.
   KRX can add ad-hoc closures (elections, temporary holidays) — add them when announced.

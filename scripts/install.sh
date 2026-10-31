@@ -34,9 +34,9 @@ cp -r "$SRC/SKILL.md" "$SRC/references" "$SKILL_DIR/"
 mkdir -p "$SKILL_DIR/scripts"
 cp "$SRC"/scripts/*.py "$SRC/scripts/install.sh" "$SKILL_DIR/scripts/"
 cp "$SRC"/scripts/kospi_morning.py "$SRC"/scripts/kospi_model.py "$SRC"/scripts/kospi_record.py \
-   "$SRC"/scripts/kospi_snapshot.py "$HERMES_HOME/scripts/"
+   "$SRC"/scripts/kospi_snapshot.py "$SRC"/scripts/kospi_rates.py "$HERMES_HOME/scripts/"
 echo "✓ skill   → $SKILL_DIR"
-echo "✓ scripts → $HERMES_HOME/scripts/kospi_{morning,model,record,snapshot}.py"
+echo "✓ scripts → $HERMES_HOME/scripts/kospi_{morning,model,rates,record,snapshot}.py"
 
 echo "… smoke test (fetches live data, ~5s)"
 if KOSPI_FORECAST_DIR="$(mktemp -d)" python3 "$HERMES_HOME/scripts/kospi_morning.py" --force | grep -q "기준 상승확률 P(up)"; then
