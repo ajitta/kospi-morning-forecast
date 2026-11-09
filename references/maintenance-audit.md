@@ -57,3 +57,15 @@ within a few percent before the fallback ships.
 
 State plainly in the report that the real 08:00 run has not been observed yet; the next morning's
 briefing is the first live check.
+
+The scratch dir is pruned after a day of inactivity — recreate `fakenow.py` from the block above
+rather than assuming it is still there.
+
+## 4. Dry-run a prompt or report-format change
+
+Before editing the live job's prompt, delegate one subagent with: the skill path, the new
+`references/cron-prompt.md`, and a saved real data block (scratch file). Ask it to write the report
+once, then audit (a) every number against the block, (b) character count vs any cap, (c) instructions
+that conflict with each other or can't be met from the block. Fix the prompt/collector from (b)/(c)
+before shipping — infeasible length caps and contradictory rules only surface when an agent actually
+writes from real data, and otherwise show up as daily caveats in delivered reports.

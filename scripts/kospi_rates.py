@@ -8,11 +8,13 @@ by kospi_model (HYG is a model input; Treasury moves alone tested no out-of-samp
 
 Sources (verified 2026-10):
 - Naver `api.stock.naver.com/marketindex/bond/{code}/prices?page=N&pageSize=60` — daily yields,
-  ~3 years (13 pages). Rows are dated in US local time and settle at 17:05 ET.
+  ~3 years (13 pages). Rows are dated in US local time; the row for a session is published around
+  18:00 ET, i.e. after the 08:00 KST run in US winter time -> live quote `marketindex/bond/{code}`
+  stands in for a finished session that has no row yet (labelled 정산 전).
 - CNN fear & greed `junk_bond_demand` component — HY minus IG yield spread (%p), ~1 year daily.
 - Naver `api.stock.naver.com/stock/{HYG|LQD|IEF.O}/price` — ETF closes (60 sessions).
-FRED (ICE BofA OAS, DGS10) is unreachable from cloud IPs without an API key (the site drops the
-connection), so it isn't used.
+FRED (ICE BofA OAS, DGS10) isn't used: `fred.stlouisfed.org` CSV downloads hang from some cloud hosts
+and `api.stlouisfed.org` needs a FRED_API_KEY.
 """
 import bisect
 import json
@@ -33,6 +35,11 @@ def _get(url, headers=None):
 
 
 def _yield_hist(code, pages=13):
+    """Daily yields {US date: %} plus a note when the newest point is the live quote (else None).
+
+    The history row for a US session appears only around 18:00 ET (= 08:00 KST in US winter time), so
+    the 08:00 briefing often runs before it exists. In that case the live quote stands in for the
+    session if that session is over (quote dated on a weekday, now past 17:05 ET on that date)."""
     out = {}
     for pg in range(1, pages + 1):
         rows = _get(f"https://api.stock.naver.com/marketindex/bond/{code}/prices?page={pg}&pageSize=60")
@@ -40,7 +47,20 @@ def _yield_hist(code, pages=13):
             break
         for r in rows:
             out[r["localTradedAt"][:10]] = float(str(r["closePrice"]).replace(",", ""))
-    return out
+    note = None
+    try:
+        q = _get(f"https://api.stock.naver.com/marketindex/bond/{code}")
+        q = q.get("exchangeInfo", q)
+        ts = datetime.fromisoformat(q["localTradedAt"])  # US local time with offset
+        qd = ts.date()
+        now_us = datetime.now(timezone.utc).astimezone(ts.tzinfo)
+        finished = now_us.date() > qd or (now_us.date() == qd and (now_us.hour, now_us.minute) >= (17, 5))
+        if qd.weekday() < 5 and finished and (not out or qd.isoformat() > max(out)):
+            out[qd.isoformat()] = float(str(q["closePrice"]).replace(",", ""))
+            note = f"{qd.isoformat()} 일별 확정치 미게시 → 현재가({ts:%H:%M} ET) 사용"
+    except Exception:  # noqa: BLE001 — history alone is still usable
+        pass
+    return out, note
 
 
 def _etf_hist(code):
@@ -115,7 +135,7 @@ def section(last_session):
         yf = {c: ex.submit(safe, f"국채 {c}", lambda c=c: _yield_hist(c)) for c, _ in YIELDS}
         ef = {c: ex.submit(safe, f"ETF {c}", lambda c=c: _etf_hist(c)) for c, _ in ETFS}
         jf = ex.submit(safe, "CNN 정크본드 스프레드", _cnn_junk)
-    Y = {c: f.result() for c, f in yf.items()}
+    Y = {c: (f.result() or (None, None)) for c, f in yf.items()}
     E = {c: f.result() for c, f in ef.items()}
     J = jf.result()
 
@@ -123,15 +143,16 @@ def section(last_session):
     mv = {}
     parts = []
     for code, name in YIELDS:
-        m = Y.get(code)
+        m, live_note = Y[code]
         r = _move(m, last_session) if m else None
         mv[code] = r
         if not r:
-            parts.append(f"{name} 데이터 수집 실패")
+            newest = max(m) if m else "없음"
+            parts.append(f"{name} 데이터 수집 실패 (일별 최신 {newest}, {last_session} 이후 마감 세션 없음)")
             continue
         z = f", z {r['z']:+.1f}" if r["z"] is not None else ""
         parts.append(f"{name} {r['last']:.3f}% ({r['chg']*100:+.1f}bp{z}; 5일 {r.get('d5', 0)*100:+.0f}bp, 20일 {r.get('d20', 0)*100:+.0f}bp; "
-                     f"3년 백분위 {r['pct']:.0f}%)")
+                     f"3년 백분위 {r['pct']:.0f}%)" + (f" [정산 전: {live_note}]" if live_note and r["last_date"] == live_note[:10] else ""))
     span = next((r["span"] for r in mv.values() if r), None)
     L.append(f"- 국채 금리 (기준 {next((r['last_date'] for r in mv.values() if r), '?')}, 반영 세션 "
              f"{next((r['n'] for r in mv.values() if r), 0)}개; z = 이번 변화 ÷ (최근 60일 일간 변화 표준편차 × √세션수); 백분위 기간 "

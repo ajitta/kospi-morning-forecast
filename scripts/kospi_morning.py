@@ -504,8 +504,7 @@ def main():
             for d in oms))
 
     futs = safe("US 선물", lambda: get("https://api.stock.naver.com/futures/nation/USA"), []) or []
-    fmap = {"EScv1": "S&P500선물", "NQcv1": "나스닥100선물", "YMcv1": "다우선물", "RTYcv1": "러셀선물"}
-    P("- 지수선물(현재): " + ", ".join(f"{fmap.get(f['reutersCode'], f['reutersCode'])} {f.get('closePrice')} ({f.get('fluctuationsRatio')}%)" for f in futs if f.get("reutersCode") in fmap))
+    P(futures_line(futs))
 
     def mi(path):
         d = get(f"https://api.stock.naver.com/marketindex/{path}")
@@ -541,6 +540,26 @@ def main():
         P("\n## 수집 오류 (해당 항목은 '데이터 수집 실패'로 표기)")
         for e in errors:
             P(f"- {e}")
+
+
+FUT_NAMES = {"EScv1": "S&P500선물", "NQcv1": "나스닥100선물", "YMcv1": "다우선물", "RTYcv1": "러셀선물"}
+
+
+def futures_line(futs):
+    """US index futures line. CME reopens at 17:00 CT (= 08:00 KST in US winter time) and Naver quotes
+    are 10 minutes delayed, so at 08:00 the quote is often still the previous close (0.00%). Flag that
+    instead of printing a 0.00% the agent would read as '보합'."""
+    fs = [f for f in futs if f.get("reutersCode") in FUT_NAMES]
+    if not fs:
+        return "- 지수선물: 데이터 수집 실패"
+    stale = [f for f in fs if num(f.get("closePrice")) == num(f.get("lastClosePrice")) and not num(f.get("fluctuationsRatio"))]
+    if len(stale) == len(fs):
+        return (f"- 지수선물: 새 세션 시세 아직 없음 (CME 17:00 CT 재개 직후·네이버 10분 지연, 시세 시각 "
+                f"{str(fs[0].get('localTradedAt', ''))[11:16]} CT) — 0.00%는 보합이 아니라 미갱신. 선물 방향은 언급하지 말 것. "
+                "직전 종가: " + ", ".join(f"{FUT_NAMES[f['reutersCode']]} {f.get('closePrice')}" for f in fs))
+    return "- 지수선물(현재): " + ", ".join(
+        f"{FUT_NAMES[f['reutersCode']]} {f.get('closePrice')} " + ("(미갱신)" if f in stale else f"({f.get('fluctuationsRatio')}%)")
+        for f in fs)
 
 
 def _read_jsonl(path):

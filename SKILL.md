@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.3.0
+version: 1.3.1
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -75,7 +75,9 @@ When adding a feature, persist only what can't be re-fetched.
 ## Procedure
 
 1. Read the injected data block (`~/.hermes/scripts/kospi_morning.py` output). Note `!!` lines and
-   the `수집 오류` section — those items are 데이터 수집 실패. `[전일 스냅샷 HH:MM]` tags mark data
+   the `수집 오류` section — those items are 데이터 수집 실패. `[정산 전]` yields are the live quote for a
+   finished US session whose daily row isn't out yet — use them, say 정산 전. Futures marked 미갱신 have no
+   new-session quote yet: don't describe their direction. `[전일 스냅샷 HH:MM]` tags mark data
    saved after yesterday's close — it is the previous session's data, use it as such. Top-10 lists
    whose header says `전부 ≈` are estimates from per-stock investor days — keep the `≈`.
 2. Web-search (Korean sources first): overnight US close wrap (`뉴욕증시 마감 {날짜}`), key US
@@ -114,7 +116,9 @@ Treasury moves alone (IEF t −1.0; US10Y change 2023–26 t −0.8), HY-minus-T
 return (t +0.2) — don't re-add any of them as adjustment reasons.
 
 Changing the baseline: add a feature only if it improves walk-forward (refit every 40 days, test from
-2019) Brier over the current model, and update the numbers quoted above and in the README. History
+2019) Brier over the current model with a paired t on per-day squared-error differences and in both
+halves of the OOS period, then update the numbers quoted above and in the README. Recipe (long-history
+proxies, the test, ship/reject steps): `references/feature-testing.md`. History
 for features comes from Naver `api.stock.naver.com/chart/{domestic|foreign}/index/{code}/day`
 (daily since 2016) and Daum investor days (`perPage=100`, ~26 pages back to 2016). Night futures have
 no history source, so they stay an adjustment input, not a feature.
@@ -155,7 +159,8 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   (`chart/domestic/index/{code}/day`, session source of truth), integration (program, breadth), FUT
   integration, themes, market-cap list, US indices/stocks/futures, market indices (bonds, DXY, FX, oil, gold).
 - US rates/credit: Naver `api.stock.naver.com/marketindex/bond/{US3MT|US2YT|US10YT|US30YT}=RR/prices`
-  (`pageSize` ≤ 60, ~13 pages ≈ 3 years, rows settle 17:05 ET); ETF daily since 2016 from
+  (`pageSize` ≤ 60, ~13 pages ≈ 3 years; a session's row is published ~18:00 ET, so before that the
+  live quote `marketindex/bond/{code}` stands in, tagged `[정산 전]`); ETF daily since 2016 from
   `chart/foreign/item/{HYG|LQD|IEF.O}/day` + `stock/{code}/price`; CNN fear & greed
   `junk_bond_demand` raw = HY − IG yield spread (%p, ~1 year).
 - Daum (`finance.daum.net/api/...`, needs `Referer: https://finance.daum.net/`): investor days with
@@ -202,10 +207,17 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   profile's `scripts/`, but the cron prompt calls `~/.hermes/scripts/kospi_record.py` — also copy
   the scripts there after every install.
 - Naver `.RUT` is unsupported (409). Treasury ETF code is `IEF.O` (`IEF` → 409/empty); `HYG`, `LQD` work bare.
-- FRED (`fred.stlouisfed.org`, ICE BofA OAS, DGS10) silently drops connections from this cloud IP;
-  `api.stlouisfed.org` works only with an API key. Hence Naver yields + CNN spread + ETF proxies.
+- FRED series (ICE BofA OAS, DGS10): if `fred.stlouisfed.org` CSV downloads hang from the host, use
+  `api.stlouisfed.org` with a free `FRED_API_KEY` (ask the user to create one; never invent it). Without
+  a key the collector uses Naver yields + CNN spread + ETF proxies.
 - HYG/LQD chart closes are not dividend-adjusted: each monthly ex-dividend day shows ≈ −0.3~0.5%
   that isn't a credit move. Check the date before calling a small HYG drop a credit signal.
 - US market-index quotes (bonds, DXY, futures) are live at fetch time, not the US close — say "현재".
+- 08:00 KST is 19:00 ET in US summer time but 18:00 ET in winter (EST, Nov–Mar), so a source that
+  publishes around 18:00 ET works all summer and breaks every weekday from the first week of November:
+  Naver bond history rows for the last US session (section 8-1 went `데이터 수집 실패` with no `!!`), and
+  CME index futures (reopen 17:00 CT + Naver 10-min delay → all four at 0.00%, read by the agent as
+  보합). Mondays still worked (weekend lag). Since v1.3.1 the collector falls back to the live bond quote
+  and labels stale futures `미갱신`. When auditing, compare runs on both sides of a DST switch.
 - Holiday table `KRX_HOLIDAYS` in the script runs through 2027; the script warns when it expires.
   KRX can add ad-hoc closures (elections, temporary holidays) — add them when announced.
