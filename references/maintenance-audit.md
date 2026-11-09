@@ -41,8 +41,8 @@ class FakeDT(_dt.datetime):
         return target.astimezone(tz) if tz else target.replace(tzinfo=None)
 sys.argv = [sys.argv[2]] + sys.argv[3:]
 sys.path.insert(0, "/home/ubuntu/work/kospi-morning-forecast/scripts")
-import kospi_morning as km
-km.datetime = FakeDT
+import kospi_morning as km, kospi_rates as kr
+km.datetime = kr.datetime = FakeDT  # kospi_rates has its own clock (live-quote fallback for yields)
 km.snapshot() if "--snapshot" in sys.argv else km.main()
 ```
 
