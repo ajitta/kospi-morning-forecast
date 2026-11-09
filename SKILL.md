@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.3.1
+version: 1.3.2
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -76,7 +76,9 @@ When adding a feature, persist only what can't be re-fetched.
 
 1. Read the injected data block (`~/.hermes/scripts/kospi_morning.py` output). Note `!!` lines and
    the `수집 오류` section — those items are 데이터 수집 실패. `[정산 전]` yields are the live quote for a
-   finished US session whose daily row isn't out yet — use them, say 정산 전. Futures marked 미갱신 have no
+   finished US session whose daily row isn't out yet (±2bp vs the final) — use them, say 정산 전, and
+   keep `(잠정)` on size/curve calls. Yields 수집 실패 with 8/`## 0` showing a US session = likely a US
+   bond-market holiday (Columbus/Veterans Day) — check before calling it a data failure. Futures marked 미갱신 have no
    new-session quote yet: don't describe their direction. `[전일 스냅샷 HH:MM]` tags mark data
    saved after yesterday's close — it is the previous session's data, use it as such. Top-10 lists
    whose header says `전부 ≈` are estimates from per-stock investor days — keep the `≈`.
@@ -160,7 +162,8 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   integration, themes, market-cap list, US indices/stocks/futures, market indices (bonds, DXY, FX, oil, gold).
 - US rates/credit: Naver `api.stock.naver.com/marketindex/bond/{US3MT|US2YT|US10YT|US30YT}=RR/prices`
   (`pageSize` ≤ 60, ~13 pages ≈ 3 years; a session's row is published ~18:00 ET, so before that the
-  live quote `marketindex/bond/{code}` stands in, tagged `[정산 전]`); ETF daily since 2016 from
+  live quote `marketindex/bond/{code}` stands in, tagged `[정산 전]`, only if traded ≥14:00 ET — it differs
+  from the later row by up to ~2bp; US bond-market holidays never get a row); ETF daily since 2016 from
   `chart/foreign/item/{HYG|LQD|IEF.O}/day` + `stock/{code}/price`; CNN fear & greed
   `junk_bond_demand` raw = HY − IG yield spread (%p, ~1 year).
 - Daum (`finance.daum.net/api/...`, needs `Referer: https://finance.daum.net/`): investor days with
@@ -218,6 +221,8 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   Naver bond history rows for the last US session (section 8-1 went `데이터 수집 실패` with no `!!`), and
   CME index futures (reopen 17:00 CT + Naver 10-min delay → all four at 0.00%, read by the agent as
   보합). Mondays still worked (weekend lag). Since v1.3.1 the collector falls back to the live bond quote
-  and labels stale futures `미갱신`. When auditing, compare runs on both sides of a DST switch.
+  and labels stale futures `미갱신`. Any fallback must reject US bond-market holidays (stocks trade, no
+  yield row ever, the quote still moves in Asian/London hours) — v1.3.2 requires a quote ≥14:00 ET.
+  Test fallbacks with realistic stand-in values, not the final value itself (that hides the gap). When auditing, compare runs on both sides of a DST switch.
 - Holiday table `KRX_HOLIDAYS` in the script runs through 2027; the script warns when it expires.
   KRX can add ad-hoc closures (elections, temporary holidays) — add them when announced.

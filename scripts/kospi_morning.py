@@ -549,7 +549,7 @@ def futures_line(futs):
     """US index futures line. CME reopens at 17:00 CT (= 08:00 KST in US winter time) and Naver quotes
     are 10 minutes delayed, so at 08:00 the quote is often still the previous close (0.00%). Flag that
     instead of printing a 0.00% the agent would read as '보합'."""
-    fs = [f for f in futs if f.get("reutersCode") in FUT_NAMES]
+    fs = [f for f in futs if f.get("reutersCode") in FUT_NAMES and num(f.get("closePrice")) is not None]
     if not fs:
         return "- 지수선물: 데이터 수집 실패"
     stale = [f for f in fs if num(f.get("closePrice")) == num(f.get("lastClosePrice")) and not num(f.get("fluctuationsRatio"))]

@@ -10,7 +10,8 @@ Sources (verified 2026-10):
 - Naver `api.stock.naver.com/marketindex/bond/{code}/prices?page=N&pageSize=60` — daily yields,
   ~3 years (13 pages). Rows are dated in US local time; the row for a session is published around
   18:00 ET, i.e. after the 08:00 KST run in US winter time -> live quote `marketindex/bond/{code}`
-  stands in for a finished session that has no row yet (labelled 정산 전).
+  stands in for a finished session that has no row yet (labelled 정산 전; rules in _yield_hist).
+  US bond-market holidays (Columbus, Veterans Day, ...) never get a row.
 - CNN fear & greed `junk_bond_demand` component — HY minus IG yield spread (%p), ~1 year daily.
 - Naver `api.stock.naver.com/stock/{HYG|LQD|IEF.O}/price` — ETF closes (60 sessions).
 FRED (ICE BofA OAS, DGS10) isn't used: `fred.stlouisfed.org` CSV downloads hang from some cloud hosts
@@ -35,11 +36,15 @@ def _get(url, headers=None):
 
 
 def _yield_hist(code, pages=13):
-    """Daily yields {US date: %} plus a note when the newest point is the live quote (else None).
+    """-> (daily yields {US date: %}, live-quote time 'HH:MM' if the newest point is the live quote else
+    None, newest date in the published history).
 
     The history row for a US session appears only around 18:00 ET (= 08:00 KST in US winter time), so
-    the 08:00 briefing often runs before it exists. In that case the live quote stands in for the
-    session if that session is over (quote dated on a weekday, now past 17:05 ET on that date)."""
+    the 08:00 briefing often runs before it exists. The live quote then stands in for that session if:
+    it is dated on a weekday later than the newest row, that day is over (now past 17:05 ET), and the
+    quote itself was traded at/after 14:00 ET. The last rule drops US bond-market holidays (no history
+    row ever; the quote only moves in Asian/London hours) and quotes that stopped early; 14:00 keeps
+    early-close days (their rows are stamped ~14:30). Measured gap to the later row: up to ~2bp."""
     out = {}
     for pg in range(1, pages + 1):
         rows = _get(f"https://api.stock.naver.com/marketindex/bond/{code}/prices?page={pg}&pageSize=60")
@@ -47,7 +52,8 @@ def _yield_hist(code, pages=13):
             break
         for r in rows:
             out[r["localTradedAt"][:10]] = float(str(r["closePrice"]).replace(",", ""))
-    note = None
+    newest = max(out) if out else None
+    live = None
     try:
         q = _get(f"https://api.stock.naver.com/marketindex/bond/{code}")
         q = q.get("exchangeInfo", q)
@@ -55,12 +61,13 @@ def _yield_hist(code, pages=13):
         qd = ts.date()
         now_us = datetime.now(timezone.utc).astimezone(ts.tzinfo)
         finished = now_us.date() > qd or (now_us.date() == qd and (now_us.hour, now_us.minute) >= (17, 5))
-        if qd.weekday() < 5 and finished and (not out or qd.isoformat() > max(out)):
+        if (qd.weekday() < 5 and finished and (ts.hour, ts.minute) >= (14, 0)
+                and (newest is None or qd.isoformat() > newest)):
             out[qd.isoformat()] = float(str(q["closePrice"]).replace(",", ""))
-            note = f"{qd.isoformat()} 일별 확정치 미게시 → 현재가({ts:%H:%M} ET) 사용"
+            live = f"{ts:%H:%M}"
     except Exception:  # noqa: BLE001 — history alone is still usable
         pass
-    return out, note
+    return out, live, newest
 
 
 def _etf_hist(code):
@@ -135,37 +142,48 @@ def section(last_session):
         yf = {c: ex.submit(safe, f"국채 {c}", lambda c=c: _yield_hist(c)) for c, _ in YIELDS}
         ef = {c: ex.submit(safe, f"ETF {c}", lambda c=c: _etf_hist(c)) for c, _ in ETFS}
         jf = ex.submit(safe, "CNN 정크본드 스프레드", _cnn_junk)
-    Y = {c: (f.result() or (None, None)) for c, f in yf.items()}
+    Y = {c: (f.result() or (None, None, None)) for c, f in yf.items()}
     E = {c: f.result() for c, f in ef.items()}
     J = jf.result()
 
     L = [f"\n## 8-1. 미국 국채 금리·회사채 신용 ({last_session} KRX 마감 이후 마감된 미국 세션 기준 변화)"]
     mv = {}
     parts = []
+    prov = set()  # tenors whose newest point is the live quote (provisional)
     for code, name in YIELDS:
-        m, live_note = Y[code]
+        m, live, newest = Y[code]
         r = _move(m, last_session) if m else None
         mv[code] = r
         if not r:
-            newest = max(m) if m else "없음"
-            parts.append(f"{name} 데이터 수집 실패 (일별 최신 {newest}, {last_session} 이후 마감 세션 없음)")
+            parts.append(f"{name} 데이터 수집 실패 (일별 최신 {newest or '없음'}, {last_session} 이후 마감 세션 없음"
+                         " — 미 채권시장 휴장 또는 확정치 미게시)")
             continue
         z = f", z {r['z']:+.1f}" if r["z"] is not None else ""
+        tag = ""
+        if live and r["last_date"] > (newest or ""):
+            prov.add(code)
+            tag = f" [정산 전 현재가 {live} ET]"
         parts.append(f"{name} {r['last']:.3f}% ({r['chg']*100:+.1f}bp{z}; 5일 {r.get('d5', 0)*100:+.0f}bp, 20일 {r.get('d20', 0)*100:+.0f}bp; "
-                     f"3년 백분위 {r['pct']:.0f}%)" + (f" [정산 전: {live_note}]" if live_note and r["last_date"] == live_note[:10] else ""))
+                     f"3년 백분위 {r['pct']:.0f}%){tag}")
+
+    def tent(*codes):
+        return " (잠정)" if prov & set(codes) else ""
     span = next((r["span"] for r in mv.values() if r), None)
     L.append(f"- 국채 금리 (기준 {next((r['last_date'] for r in mv.values() if r), '?')}, 반영 세션 "
              f"{next((r['n'] for r in mv.values() if r), 0)}개; z = 이번 변화 ÷ (최근 60일 일간 변화 표준편차 × √세션수); 백분위 기간 "
              f"{span[0] if span else '?'}~): ")
     for ptxt in parts:
         L.append(f"  - {ptxt}")
+    if prov:
+        L.append("  - 주의: [정산 전] 값은 일별 확정치가 아직 안 나와 쓴 현재가 — 확정치와 ±2bp 안팎 차이 가능"
+                 "(2026-11 실측 최대 2.1bp). '(잠정)' 표시 판정은 경계값 근처면 바뀔 수 있음")
     r10, r2, r3m = mv.get("US10YT=RR"), mv.get("US2YT=RR"), mv.get("US3MT=RR")
     if r10:
-        L.append(f"  - 판정: 10년물 변화 {_size(r10['z'])}")
+        L.append(f"  - 판정{tent('US10YT=RR')}: 10년물 변화 {_size(r10['z'])}")
     if r10 and r2:
         c_now = (r10["last"] - r2["last"]) * 100
         d2, d10 = r2["chg"] * 100, r10["chg"] * 100
-        L.append(f"- 커브: 10년-2년 {c_now:+.0f}bp (이번 {d10 - d2:+.1f}bp) → {_curve_shape(d2, d10)}")
+        L.append(f"- 커브{tent('US10YT=RR', 'US2YT=RR')}: 10년-2년 {c_now:+.0f}bp (이번 {d10 - d2:+.1f}bp) → {_curve_shape(d2, d10)}")
     if r10 and r3m:
         c3 = (r10["last"] - r3m["last"]) * 100
         L.append(f"  10년-3개월 {c3:+.0f}bp ({'역전' if c3 < 0 else '정상'}; 이번 {(r10['chg'] - r3m['chg'])*100:+.1f}bp)")
@@ -202,7 +220,7 @@ def section(last_session):
                   "안전자산 선호형(금리↓·스프레드↑) — 경기 우려" if down and wide else
                   "완화 기대형(금리↓·스프레드↓) — 위험선호" if down and tight else
                   "뚜렷한 조합 없음(금리 또는 스프레드 변화 2bp 미만)")
-        L.append(f"- 조합 판정(통상적 해석 틀, 통계 검증 아님): {regime}")
+        L.append(f"- 조합 판정(통상적 해석 틀, 통계 검증 아님){tent('US10YT=RR')}: {regime}")
     L.append("- 확률 반영: HYG는 '## 0' 모델 입력, 국채 금리·스프레드 변화 자체는 조정 사유 아님('## 0' 금리·신용 줄 참고)")
     for e in errors:
         L.append(f"- !! {e}")
