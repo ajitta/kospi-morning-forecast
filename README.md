@@ -7,6 +7,7 @@
 - 간밤 미국 시장
 - 미국 국채 금리(3개월·2년·10년·30년)와 회사채 신용 스프레드의 변화, 크기 판정, 커브 형태, 해석
 - 한국 국가 CDS 프리미엄(외평채 5년물) 수준·변화와 주변국 비교, CDS 시장 동향(기사 기반)
+- 개별 기업 CDS(한국 기업·AI 반도체·AI 인프라)와 CDS 지수의 수준·변화, 종목별 CDS 거래 급증 여부
 - 강세·약세 테마와 업종별 수급
 - 외국인·기관 순매수/순매도 상위 10종목과 매매 이유
 - 통계 모델로 낸 오늘 KOSPI 상승 확률과 68% 예상 범위
@@ -15,7 +16,7 @@
 ## 요구사항
 - Hermes Agent 설치. 메신저(Telegram 등)로 받으려면 gateway가 실행 중이어야 함
 - python3 (표준 라이브러리만 사용, 추가 패키지 없음)
-- 네이버·다음 금융, 국제금융센터(kcif.or.kr), worldgovernmentbonds.com에 접속 가능한 네트워크
+- 네이버·다음 금융, 국제금융센터(kcif.or.kr), worldgovernmentbonds.com, ice.com, pddata.dtcc.com에 접속 가능한 네트워크
 
 ## 설치
 ```bash
@@ -41,6 +42,7 @@ bash scripts/install.sh --with-history   # (선택) 운영 중인 예측 기록�
   - 68% 예상 범위: 과거 예측 오차 분포 × 현재 KOSPI 변동성
   - 2016년 이후 데이터로 매 실행 때마다 다시 학습하고, 2019년 이후 구간으로 성능을 검증함
 - `scripts/kospi_rates.py`: 미국 국채 금리·커브·신용 스프레드 블록 (네이버 금리, CNN 정크본드 스프레드, HYG·LQD·IEF)
+- `scripts/kospi_cds_corp.py`: 개별 기업·지수 CDS 블록 — ICE Clear Credit 5년물 정산가(스프레드 환산)로 한국 기업(SK하이닉스·POSCO·LG화학·은행)·AI 반도체·AI 인프라(오라클·코어위브 등)·CDX/iTraxx 수준과 변화, DTCC 공개 체결 데이터로 종목별 CDS 거래 건수(20세션 평균 대비). 정산가는 당일분만 제공되어 로컬(`snapshots/icc_cds.json`)에 누적
 - `scripts/kospi_cds.py`: 국가 CDS 프리미엄 블록 — 한국 외평채 5년물(국제금융센터) 수준·변화·백분위 + 중국·일본·미국 비교(worldgovernmentbonds). 모델 입력 검증에서 개선이 없어(t +0.75) 해석용으로만 표시
 - `scripts/kospi_record.py`: 예측 기록. AI의 조정은 ±10%p까지만 허용하고 조정 사유가 필수
 - `scripts/kospi_snapshot.py`: 평일 16:10·20:10에 LLM 없이 도는 스크립트 작업

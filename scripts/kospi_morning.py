@@ -182,6 +182,15 @@ def snapshot():
     Silent on success; prints a warning (delivered by cron) only if the last run of the day is still incomplete."""
     now = datetime.now(KST)
     today = now.date()
+    # ICE CDS settlement prices are served for the latest day only: capture every weekday (KRX holidays
+    # too) so the 1/5/20-day changes in section 8-3 have no gaps. Silent unless the 20:10 run fails.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import kospi_cds_corp
+        kospi_cds_corp.save_only()
+    except Exception as e:  # noqa: BLE001
+        if now.hour >= 20:
+            print(f"!! ICE CDS 정산가 저장 실패: {type(e).__name__}: {e}")
     if not is_krx_open(today) or now.hour < CLOSE_DONE_HOUR:
         return
     rows = safe("KOSPI 일별", lambda: index_days("KOSPI", today, True), []) or []
@@ -527,6 +536,11 @@ def main():
         P(kospi_cds.section(since, today))
     except Exception as e:  # noqa: BLE001
         P(f"\n## 8-2. 국가 CDS 프리미엄\n- !! 수집 실패: {type(e).__name__}: {e}")
+    try:
+        import kospi_cds_corp
+        P(kospi_cds_corp.section(since, today))
+    except Exception as e:  # noqa: BLE001
+        P(f"\n## 8-3. 개별 기업·지수 CDS\n- !! 수집 실패: {type(e).__name__}: {e}")
 
     # ---------------------------------------------------- statistical baseline
     P("\n## 0. 통계 기준 예측 (예측 확률·범위의 출발점 — 이 값에서 ±10%p 이내로만 조정)")

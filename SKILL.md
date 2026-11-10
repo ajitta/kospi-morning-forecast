@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.4.0
+version: 1.5.0
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -21,7 +21,7 @@ direction forecast that is recorded and scored the next day. KOSPI only — KOSD
 ## Install / share / release
 
 Bundled files: `scripts/kospi_morning.py` (collector, cron `script=`), `scripts/kospi_model.py`
-(baseline), `scripts/kospi_rates.py` (US Treasury + credit block), `scripts/kospi_cds.py` (sovereign CDS block), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
+(baseline), `scripts/kospi_rates.py` (US Treasury + credit block), `scripts/kospi_cds.py` (sovereign CDS block), `scripts/kospi_cds_corp.py` (company/index CDS levels + trades), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
 (after-close snapshot, `--no-agent` cron job), `references/cron-prompt.md` (job prompt).
 `bash scripts/install.sh [--cron [<deliver>]] [--snapshot-cron [<deliver>]] [--with-history]` copies the
 scripts to `$HERMES_HOME/scripts/` (cron scripts must live there), smoke-tests the live data path,
@@ -111,6 +111,11 @@ When adding a feature, persist only what can't be re-fetched.
       - CDS (section `8-2`): 한국 5년물 수준(bp)·변화(크기 판정)·1년/3년 백분위, 중국·일본·미국 대비 동반/엇갈림
         → 국내 고유 위험인지 지역·글로벌 위험인지 1–2줄 + CDS 시장 동향 기사([기사 기반]). 기준일이 다르면
         (`!! 미갱신`, `새 값 없음`) 그 날짜를 그대로 쓰고 변화는 말하지 않는다. 확률 영향: 없음(검증 기각).
+      - 개별 기업·지수 CDS (section `8-3`): 지수(CDX IG/HY, iTraxx 아시아 IG) 수준·변화 → 한국 기업(SK하이닉스·POSCO·
+        LG화학·은행) → AI·반도체(엔비디아·TSMC·브로드컴…) → AI 인프라(오라클·코어위브·하이퍼스케일러) 순으로 bp와
+        전일/5일/20일 변화, 확대·축소 상위. 거래: DTCC 신규 체결 건수와 20세션 평균 대비 배수(× ≥2 = 헤지 수요 급증으로
+        언급), 체결 상위. 해석 2–3줄: AI 신용 스트레스 → 반도체 밸류에이션·외국인 반도체 수급 경로. bp는 정산가 환산(≈)
+        이므로 `≈`를 붙이고, 이력이 짧아 변화가 없으면 수준만 말한다. 확률 영향: 없음(미검증).
    4. 전일 KOSPI 수급: 현물(외/기/개, 기관 세부, 5·20일 누적, 연속일), 선물(계약, 미결제 변화,
       누적 = 포지션 방향), 옵션 [기사 기반], 프로그램(차익/비차익)
    5. 강세/약세 테마 + 업종 수급, and what they imply for today
@@ -149,7 +154,8 @@ information the model can't see, and name it with a number + source:
 - material news/earnings released after the US close or Korea pre-open events (data releases, policy)
 - one-off regime facts (circuit-breaker day, holiday gap of several sessions, option expiry)
 Never adjust for the US index moves themselves, Treasury yield / curve / credit-spread moves (HYG is
-in the model, the rest tested null), Korea CDS level or moves (tested null), foreign flows, "oversold" or general mood. No clear
+in the model, the rest tested null), Korea CDS level or moves (tested null), company/index CDS levels, moves or
+trade counts (untested), foreign flows, "oversold" or general mood. No clear
 reason → adjust 0. The range is the model's — don't widen or narrow it. Say plainly that the 68%
 range misses about one day in three and tail days (e.g. 2026-10-15 −7.57% vs range −3.6~+0.2) will fall
 outside.
@@ -189,6 +195,18 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   with the page's `jsGlobalVars` as `{"GLOBALVAR": …}` + Origin/Referer headers (403 without). WGB's own Korea
   series is a different vendor (≈1bp off), one business day late and gappy — don't use it for Korea.
   investing.com is 403 from the host.
+- Company/index CDS levels: ICE Clear Credit EOD settlement prices, free JSON
+  `www.ice.com/api/cds-settlement-prices/icc-single-names` and `.../icc-indexes` (fields clearingDate, name,
+  instrumentName `TICKER.SNRFOR.USD.XR14.100.2031-12-20`, eodPrice = 100 − upfront%). Latest day only — no
+  history endpoint, so `kospi_cds_corp` appends every fetch to `snapshots/icc_cds.json` (morning run + the
+  16:10/20:10 snapshot job, which saves before its KRX-holiday gate). Korean names cleared there: Rep Korea,
+  KDB, KEXIM, Woori, KT, LG Chem, POSCO Hldgs, SK hynix (no Samsung/Hyundai). Asian names clear on the Asian
+  day, US names ~17:00 ET.
+- Company CDS trades: DTCC PPD SEC (single-name CDS are security-based swaps): cumulative
+  `pddata.dtcc.com/ppd/api/report/cumulative/sec/SEC_CUMULATIVE_CREDITS_YYYY_MM_DD.zip` (after the UTC day
+  ends, >1 year back) and intraday `api/slice/SEC/CR` (rolling 24h list of S3 zips; the 08:00 KST run needs
+  these for the last US session). Entity = REDID prefix (6 chars) of `Underlier ID-Leg 1`; names are often
+  blank. Index CDS are in the CFTC file, not SEC.
 - Daum (`finance.daum.net/api/...`, needs `Referer: https://finance.daum.net/`): investor days with
   detail breakdown, futures days (investor contracts + open interest), investor top lists (with
   `fromDate`/`toDate`), per-stock investor days (`/api/investor/days?symbolCode=A{code}`), sectors.
@@ -253,5 +271,10 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
 - Korea CDS dates follow KCIF (value for that day's overseas close). Whether the previous day's value is
   out by 08:00 KST hasn't been audited across a month yet — `!! 미갱신` every morning means it isn't, and
   the change then lags a day (still fine for a descriptive block; don't "fix" it with WGB's Korea series).
+- DTCC single-name upfronts can't give spreads: `Other payment amount` has no sign (S above vs below the
+  coupon is ambiguous — Amazon/MSFT/Alphabet sit below 100bp, NVIDIA crossed it in Oct 2026) and notionals
+  over $5M print as `5,000,000+`. Curve-slope or continuity tricks to recover the sign failed against press
+  levels — use ICE prices for levels, DTCC only for trade counts. Identical upfront % on ≥3 names = package
+  trade artefact.
 - Holiday table `KRX_HOLIDAYS` in the script runs through 2027; the script warns when it expires.
   KRX can add ad-hoc closures (elections, temporary holidays) — add them when announced.
