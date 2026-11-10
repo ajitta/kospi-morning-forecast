@@ -18,6 +18,28 @@ shipping any change whose behaviour depends on the time of day.
   time-of-day bug, not a flaky source.
 - Then re-run the collector now (`KOSPI_FORECAST_DIR=<scratch> ... --force`). If a section that failed
   at 08:00 works in the afternoon, the endpoint is session-scoped and resets before the open.
+- Compare runs before and after a US DST switch (first Sunday of Nov, second Sunday of Mar): a section
+  that fails only on winter weekdays (Mondays fine) depends on something published ~18:00 ET.
+- Section 8's `금리/환율/원자재(현재)` and `지수선물` lines log the live quotes at 08:00 every day. Diff them
+  against the rows published later to measure what a live-quote stand-in would get wrong.
+
+## 1b. Judge the live track record
+
+- **Reproduce every recorded baseline** before blaming the model: load the series once
+  (`kospi_model.load_series(<today>)`), then per forecast date `build_rows(series, T, use_hyg=<as
+  shipped then>)`, fit on `hist` rows with `T < date`, predict `cur`. Exact match of `p_model/low/high`
+  = the 08:00 pipeline fed the model correctly; a mismatch = time-of-day data bug.
+- Significance with small n: paired t of per-day Brier (model vs 0.555 base rate; final vs model),
+  t of the live mean vs the backtest Brier, binomial P(coverage ≤ k | 0.68). Then slice the walk-forward
+  backtest by year and by the live window (`backtest` loop, keep per-day p/y) — if the backtest's own
+  recent windows are fine, the live gap is noise. Don't change the model below ~40 live records.
+
+## 1c. Cross-check flow numbers independently
+
+One full daily table covers spot (개인/외국인/기관), program (차익/비차익) and futures contracts:
+`open.shinhansec.com/goodicyber/mk/1201.jsp` (매경, 억원/계약); program also at
+`markets.hankyung.com/investment/program-trading` (백만원). Find them via web search. Personal blogs
+(tistory etc.) disagree often — a blog mismatch flagged in a report is not evidence of a collector bug.
 
 ## 2. Diagnose a portal number that disagrees with KRX/press
 
@@ -55,6 +77,13 @@ To exercise a fallback path (e.g. ranking window mismatch), wrap `km.daum` to al
 and compare the fallback's output with the primary source on the same day — they should agree
 within a few percent before the fallback ships.
 
+For the yield live-quote stand-in, wrap `kr._get`: hide `/prices` rows dated ≥ D and return a synthetic
+quote `{"localTradedAt": "<D>T<HH:MM>:00-05:00", "closePrice": ...}`. Cases: post-close 17:59 (used),
+11:30 or 04:10 (holiday-like, rejected), 13:21 (stale, rejected), 14:30 (early close, used), a
+Monday-dated quote under a Sunday-evening clock (rejected). Compare against history cut at the same
+date (hide rows ≥ D+1) — full history adds later sessions and changes n. Matching numbers only prove
+the plumbing when the stand-in is the final value; measure the real gap separately (§1).
+
 State plainly in the report that the real 08:00 run has not been observed yet; the next morning's
 briefing is the first live check.
 
@@ -69,3 +98,18 @@ once, then audit (a) every number against the block, (b) character count vs any 
 that conflict with each other or can't be met from the block. Fix the prompt/collector from (b)/(c)
 before shipping — infeasible length caps and contradictory rules only surface when an agent actually
 writes from real data, and otherwise show up as daily caveats in delivered reports.
+
+## 5. Independent re-review of a release
+
+Delegate one subagent (it knows nothing of the session) with, in `context`:
+- reply language (Korean), output shape: numbered findings `[높음/중간/낮음] file:line — problem —
+  evidence from a real run — fix`, then what was checked and found correct, then what is unverified;
+- guardrails: no repo edits, no commit/push/tag, no `kospi_record.py`, no `hermes cron run`, never
+  write the real data dir — scratch `KOSPI_FORECAST_DIR`, `KOSPI_SNAPSHOT_DIR` unset;
+- the diff range (`git diff vPREV..HEAD`), the original problem with its evidence paths, the fix design,
+  and the tests already run ("re-run or extend them, don't just trust them");
+- a probe list: Monday 08:00 (= Sunday evening ET), US bond-market and NYSE holidays, KRX holiday gaps
+  (several US sessions), DST switch dates, evening/afternoon runs, endpoint failure, installed copies
+  == HEAD, other sections' output format unchanged.
+While it runs, do your own targeted checks (e.g. holiday rows in the history, logged-quote gaps) and
+merge both into one report. Treat its claims as reports: re-check anything you will act on.

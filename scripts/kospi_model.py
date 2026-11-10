@@ -17,6 +17,10 @@ Rates/credit (tested 2026-10, same walk-forward, paired t on squared-error diffe
   + HYG z            Brier 0.2223 -> 0.2184 (t -3.8; 2019-22 t -3.1, 2023-26 t -2.5)  -> in the model
   + IEF z (rates)    0.2223 -> 0.2218 (t -1.0)   + HYG-IEF z (credit only) 0.2224 (t +0.2)
   + US10Y change z (Naver yields, 2023-26 only)  0.2145 -> 0.2135 (t -0.8)       -> not in the model
+Korea sovereign CDS 5y (tested 2026-11, KCIF series since 2008, change from the newest value before
+the last KRX session to the newest before T, / 20-day diff stdev):
+  + CDS change z  0.2187 -> 0.2188 (t +0.75; 2019-22 t +0.97, 2023-26 t +0.23)
+  + CDS 1y level z (t +0.87)   (worldgovernmentbonds series: change t +0.86, level t +1.23)  -> not in the model
 """
 import bisect
 import json

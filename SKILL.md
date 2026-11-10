@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.3.2
+version: 1.4.0
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -21,7 +21,7 @@ direction forecast that is recorded and scored the next day. KOSPI only — KOSD
 ## Install / share / release
 
 Bundled files: `scripts/kospi_morning.py` (collector, cron `script=`), `scripts/kospi_model.py`
-(baseline), `scripts/kospi_rates.py` (US Treasury + credit block), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
+(baseline), `scripts/kospi_rates.py` (US Treasury + credit block), `scripts/kospi_cds.py` (sovereign CDS block), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
 (after-close snapshot, `--no-agent` cron job), `references/cron-prompt.md` (job prompt).
 `bash scripts/install.sh [--cron [<deliver>]] [--snapshot-cron [<deliver>]] [--with-history]` copies the
 scripts to `$HERMES_HOME/scripts/` (cron scripts must live there), smoke-tests the live data path,
@@ -43,7 +43,17 @@ Canonical source is the public repo `ajitta/kospi-morning-forecast` (working cop
 5. Bump `version:` → commit → push main → tag `vX.Y.Z` on the pushed HEAD and push the tag →
    `gh release create` with a one-line Korean changelog. Push main and tag as separate steps and
    stop on the first failure; a chained `&&` that pushes the tag before a rejected main push
-   publishes a tag for an unpublished commit.
+   publishes a tag for an unpublished commit. Finish every doc/reference edit before tagging — a
+   commit after the tag leaves the release behind what is installed.
+6. The user usually asks for a re-review after a release ("작업한 내용을 다시 리뷰"): run an independent
+   subagent review (template: `references/maintenance-audit.md` §5) and do your own targeted checks
+   while it runs. Report as a numbered list with severity + evidence, then an (a)/(b) fix choice with
+   the recommendation first; the user typically answers "추천대로" and expects the fix shipped as the
+   next patch release.
+
+Audits ("검토", "문제점 찾아서 개선") follow `references/maintenance-audit.md`: delivered runs → track-record
+reproduction → independent data cross-check → findings by priority with a recommended fix plan. Don't
+ship fixes from an audit request alone; offer them as options.
 If the cron prompt changes, update `references/cron-prompt.md` and the live job together. General
 sharing procedure: `hermes-agent-skill-authoring` → `references/sharing-user-skills.md`.
 
@@ -85,6 +95,9 @@ When adding a feature, persist only what can't be re-fetched.
 2. Web-search (Korean sources first): overnight US close wrap (`뉴욕증시 마감 {날짜}`), key US
    macro/earnings events, options flows (rule above), and news for the largest top-10 names.
    Also check today's scheduled events (Korean/US data releases, 옵션 만기일, FOMC, big earnings).
+   CDS market news (`한국 CDS 프리미엄`, `CDS 급등 {월}`, `AI 기업 CDS 오라클 코어위브`, `은행 CDS`): only
+   items from the last ~3 days that matter for Korea risk or US credit/AI-capex stress; label
+   `[기사 기반]` + outlet. Nothing recent → `CDS 관련 특이 기사 없음`.
 3. Write the report in this order:
    1. 한 줄 결론: 오늘 KOSPI 방향 · 최종 P(상승) (기준 X% → 최종 Y%) · 68% 범위
    2. 전일 예측 채점 (scorecard section; one line on why it hit/missed)
@@ -95,6 +108,9 @@ When adding a feature, persist only what can't be re-fetched.
         KOSPI 경로(미 금리·달러 → 원/달러·외국인 수급; 장기금리 → 반도체·성장주 밸류에이션; 신용
         확대 → 글로벌 위험회피) → 확률 영향은 `## 0`의 '금리·신용 반영 여부' 줄 그대로(HYG는 기준치에
         이미 반영, 금리·스프레드 변화 자체로는 조정 없음). 'z별 KOSPI' 구간 통계는 "표본 내 집계"로만 인용.
+      - CDS (section `8-2`): 한국 5년물 수준(bp)·변화(크기 판정)·1년/3년 백분위, 중국·일본·미국 대비 동반/엇갈림
+        → 국내 고유 위험인지 지역·글로벌 위험인지 1–2줄 + CDS 시장 동향 기사([기사 기반]). 기준일이 다르면
+        (`!! 미갱신`, `새 값 없음`) 그 날짜를 그대로 쓰고 변화는 말하지 않는다. 확률 영향: 없음(검증 기각).
    4. 전일 KOSPI 수급: 현물(외/기/개, 기관 세부, 5·20일 누적, 연속일), 선물(계약, 미결제 변화,
       누적 = 포지션 방향), 옵션 [기사 기반], 프로그램(차익/비차익)
    5. 강세/약세 테마 + 업종 수급, and what they imply for today
@@ -115,7 +131,8 @@ out-of-sample: direction 65.3% vs 55.5% always-up, Brier 0.2184 vs 0.247 base ra
 64%, 0.2223), well calibrated, 68% range covered 66.6%. HYG passed the feature rule (paired t −3.8,
 both 2019–22 and 2023–26 halves). Tested and rejected: foreign spot flow, previous day's KOSPI move,
 Treasury moves alone (IEF t −1.0; US10Y change 2023–26 t −0.8), HY-minus-Treasury credit-only
-return (t +0.2) — don't re-add any of them as adjustment reasons.
+return (t +0.2), Korea sovereign CDS 5y change z (KCIF since 2008, t +0.75) and 1-year level z (t +0.87)
+— don't re-add any of them as adjustment reasons.
 
 Changing the baseline: add a feature only if it improves walk-forward (refit every 40 days, test from
 2019) Brier over the current model with a paired t on per-day squared-error differences and in both
@@ -132,7 +149,7 @@ information the model can't see, and name it with a number + source:
 - material news/earnings released after the US close or Korea pre-open events (data releases, policy)
 - one-off regime facts (circuit-breaker day, holiday gap of several sessions, option expiry)
 Never adjust for the US index moves themselves, Treasury yield / curve / credit-spread moves (HYG is
-in the model, the rest tested null), foreign flows, "oversold" or general mood. No clear
+in the model, the rest tested null), Korea CDS level or moves (tested null), foreign flows, "oversold" or general mood. No clear
 reason → adjust 0. The range is the model's — don't widen or narrow it. Say plainly that the 68%
 range misses about one day in three and tail days (e.g. 2026-10-15 −7.57% vs range −3.6~+0.2) will fall
 outside.
@@ -166,6 +183,12 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   from the later row by up to ~2bp; US bond-market holidays never get a row); ETF daily since 2016 from
   `chart/foreign/item/{HYG|LQD|IEF.O}/day` + `stock/{code}/price`; CNN fear & greed
   `junk_bond_demand` raw = HY − IG yield spread (%p, ~1 year).
+- Korea CDS: 국제금융센터 `POST www.kcif.or.kr/comm/AuthCheck` form `code=11&period=D&sector=INTR3&chart_type=0&type=CHART`
+  (+ `startdate`/`enddate` `YYYY.MM.DD`, back to 2008) → `history` newest first; works without login despite
+  `auth_yn: N1`. Peers (China 9, Japan 11, US 6): worldgovernmentbonds `POST /wp-json/common/v1/historical`
+  with the page's `jsGlobalVars` as `{"GLOBALVAR": …}` + Origin/Referer headers (403 without). WGB's own Korea
+  series is a different vendor (≈1bp off), one business day late and gappy — don't use it for Korea.
+  investing.com is 403 from the host.
 - Daum (`finance.daum.net/api/...`, needs `Referer: https://finance.daum.net/`): investor days with
   detail breakdown, futures days (investor contracts + open interest), investor top lists (with
   `fromDate`/`toDate`), per-stock investor days (`/api/investor/days?symbolCode=A{code}`), sectors.
@@ -216,13 +239,19 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
 - HYG/LQD chart closes are not dividend-adjusted: each monthly ex-dividend day shows ≈ −0.3~0.5%
   that isn't a credit move. Check the date before calling a small HYG drop a credit signal.
 - US market-index quotes (bonds, DXY, futures) are live at fetch time, not the US close — say "현재".
-- 08:00 KST is 19:00 ET in US summer time but 18:00 ET in winter (EST, Nov–Mar), so a source that
-  publishes around 18:00 ET works all summer and breaks every weekday from the first week of November:
-  Naver bond history rows for the last US session (section 8-1 went `데이터 수집 실패` with no `!!`), and
-  CME index futures (reopen 17:00 CT + Naver 10-min delay → all four at 0.00%, read by the agent as
-  보합). Mondays still worked (weekend lag). Since v1.3.1 the collector falls back to the live bond quote
-  and labels stale futures `미갱신`. Any fallback must reject US bond-market holidays (stocks trade, no
-  yield row ever, the quote still moves in Asian/London hours) — v1.3.2 requires a quote ≥14:00 ET.
-  Test fallbacks with realistic stand-in values, not the final value itself (that hides the gap). When auditing, compare runs on both sides of a DST switch.
+- 08:00 KST is 19:00 ET in US summer time but 18:00 ET in winter (Nov–Mar). Anything published around
+  18:00 ET works all summer and fails every winter weekday: Naver bond history rows (the collector
+  substitutes the live quote, `[정산 전]`) and CME index futures (reopen 17:00 CT + Naver 10-min delay →
+  0.00%, printed as `미갱신`). Monday runs hide it (weekend lag) and so do afternoon tests — audit
+  delivered runs on both sides of a DST switch.
+- A live-quote stand-in for a missing daily row must reject days that will never get a row and quotes
+  that stopped early: US bond-market holidays (Columbus/Veterans Day — stocks trade, bonds don't, the
+  quote still moves in Asian/London hours). The collector requires the quote to be traded ≥14:00 ET
+  (early-close rows stamp ~14:30). Test any such fallback with a realistic stand-in value (the 08:00
+  live quote logged in section 8), never the final value itself — replay then agrees by construction
+  and hides the real gap (~2bp for yields).
+- Korea CDS dates follow KCIF (value for that day's overseas close). Whether the previous day's value is
+  out by 08:00 KST hasn't been audited across a month yet — `!! 미갱신` every morning means it isn't, and
+  the change then lags a day (still fine for a descriptive block; don't "fix" it with WGB's Korea series).
 - Holiday table `KRX_HOLIDAYS` in the script runs through 2027; the script warns when it expires.
   KRX can add ad-hoc closures (elections, temporary holidays) — add them when announced.

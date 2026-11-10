@@ -522,6 +522,11 @@ def main():
         P(kospi_rates.section(since))
     except Exception as e:  # noqa: BLE001
         P(f"\n## 8-1. 미국 국채 금리·회사채 신용\n- !! 수집 실패: {type(e).__name__}: {e}")
+    try:
+        import kospi_cds
+        P(kospi_cds.section(since, today))
+    except Exception as e:  # noqa: BLE001
+        P(f"\n## 8-2. 국가 CDS 프리미엄\n- !! 수집 실패: {type(e).__name__}: {e}")
 
     # ---------------------------------------------------- statistical baseline
     P("\n## 0. 통계 기준 예측 (예측 확률·범위의 출발점 — 이 값에서 ±10%p 이내로만 조정)")
