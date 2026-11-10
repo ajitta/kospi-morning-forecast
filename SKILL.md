@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.5.0
+version: 1.6.0
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -102,12 +102,16 @@ When adding a feature, persist only what can't be re-fetched.
    1. 한 줄 결론: 오늘 KOSPI 방향 · 최종 P(상승) (기준 X% → 최종 Y%) · 68% 범위
    2. 전일 예측 채점 (scorecard section; one line on why it hit/missed)
    3. 미국 시장 (indices per session, semis, FX/oil, futures now, top headlines with sources)
-      - 금리·신용 (section `8-1`): 국채 3M/2Y/10Y/30Y 수준·변화(bp)와 크기 판정, 커브 형태(불/베어
+      - 금리·신용 (section `8-1`): 국채 1M(초단기)/3M/2Y(단기)/10Y/30Y(장기) 수준·변화(bp)와 크기 판정, 커브 형태(불/베어
         스티프닝·플래트닝, 역전 여부), 신용 스프레드 수준(1년 백분위)·변화, 회사채 ETF의 국채 대비
         초과수익, 조합 판정 → **평가·해석 2–3줄**: 무엇이 움직였나(단기물 vs 장기물, 금리 vs 신용) →
         KOSPI 경로(미 금리·달러 → 원/달러·외국인 수급; 장기금리 → 반도체·성장주 밸류에이션; 신용
         확대 → 글로벌 위험회피) → 확률 영향은 `## 0`의 '금리·신용 반영 여부' 줄 그대로(HYG는 기준치에
         이미 반영, 금리·스프레드 변화 자체로는 조정 없음). 'z별 KOSPI' 구간 통계는 "표본 내 집계"로만 인용.
+      - 금리 추세 (8-1 '추세 추적'): 초단기·단기·장기별 최근 10거래일 경로, 연속 상승/하락 일수, 20일 범위 내
+        위치(고점·저점 경신), 10년−2년·10년−3개월·3개월−1개월 격차 추이, 5/20일 기준 어느 쪽이 주도했나 → 2–3줄:
+        추세가 하룻밤 변화와 같은 방향인지(되돌림인지), 단기 쪽(정책 기대)과 장기 쪽(기간 프리미엄·성장/재정) 중
+        무엇이 움직이는지. 정산 전(`*`) 마지막 값은 잠정. 확률 영향: 없음(국채 금리 검증 기각과 동일).
       - CDS (section `8-2`): 한국 5년물 수준(bp)·변화(크기 판정)·1년/3년 백분위, 중국·일본·미국 대비 동반/엇갈림
         → 국내 고유 위험인지 지역·글로벌 위험인지 1–2줄 + CDS 시장 동향 기사([기사 기반]). 기준일이 다르면
         (`!! 미갱신`, `새 값 없음`) 그 날짜를 그대로 쓰고 변화는 말하지 않는다. 확률 영향: 없음(검증 기각).
@@ -183,7 +187,8 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
 - Naver mobile JSON (`m.stock.naver.com/api/...`, `api.stock.naver.com/...`): KOSPI/KPI200 daily chart
   (`chart/domestic/index/{code}/day`, session source of truth), integration (program, breadth), FUT
   integration, themes, market-cap list, US indices/stocks/futures, market indices (bonds, DXY, FX, oil, gold).
-- US rates/credit: Naver `api.stock.naver.com/marketindex/bond/{US3MT|US2YT|US10YT|US30YT}=RR/prices`
+- US rates/credit: Naver `api.stock.naver.com/marketindex/bond/{US1MT|US3MT|US2YT|US10YT|US30YT}=RR/prices`
+  (US2MT/6MT/1YT/5YT/7YT/20YT also exist; US4MT is empty)
   (`pageSize` ≤ 60, ~13 pages ≈ 3 years; a session's row is published ~18:00 ET, so before that the
   live quote `marketindex/bond/{code}` stands in, tagged `[정산 전]`, only if traded ≥14:00 ET — it differs
   from the later row by up to ~2bp; US bond-market holidays never get a row); ETF daily since 2016 from

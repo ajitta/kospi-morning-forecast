@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """US Treasury yields + corporate credit block for the KOSPI morning briefing (stdlib only).
 
-Prints section "8-1" of the data block: Treasury levels and changes, curve shape, a credit spread
+Prints section "8-1" of the data block: Treasury levels and changes (1M T-bill = 초단기, 3M/2Y = 단기,
+10Y/30Y = 장기), curve shape, a 10-session trend block per tenor (daily path, streak, 20-day range
+position, 10Y-2Y / 10Y-3M / 3M-1M spread paths, which end led over 5/20 days), a credit spread
 and credit-only ETF proxies, each with a size label (z vs recent daily moves) and a rule-based
 regime label. Labels are descriptive; whether any of this moves the KOSPI probability is settled
 by kospi_model (HYG is a model input; Treasury moves alone tested no out-of-sample gain).
@@ -25,7 +27,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
-YIELDS = [("US3MT=RR", "3개월"), ("US2YT=RR", "2년"), ("US10YT=RR", "10년"), ("US30YT=RR", "30년")]
+YIELDS = [("US1MT=RR", "1개월"), ("US3MT=RR", "3개월"), ("US2YT=RR", "2년"), ("US10YT=RR", "10년"), ("US30YT=RR", "30년")]
+# trend block buckets: 초단기 = T-bill 1M (policy-rate expectations, money-market stress; noisy around
+# month-end/Treasury cash swings), 단기 = 3M/2Y, 장기 = 10Y/30Y
+BUCKETS = [("초단기", ["US1MT=RR"]), ("단기", ["US3MT=RR", "US2YT=RR"]), ("장기", ["US10YT=RR", "US30YT=RR"])]
+TREND_N = 10
 ETFS = [("HYG", "HYG(하이일드)"), ("LQD", "LQD(투자등급)"), ("IEF.O", "IEF(7-10년 국채)")]
 
 
@@ -127,6 +133,78 @@ def _curve_shape(d2, d10):
                                                          " — 장기물 주도 하락" if level < 0 else " — 단기물 주도 상승")
 
 
+def _streak(vals):
+    """Consecutive same-sign daily moves ending at the last point (0 change breaks the run)."""
+    n, sign = 0, 0
+    for k in range(len(vals) - 1, 0, -1):
+        d = vals[k] - vals[k - 1]
+        sg = (d > 0) - (d < 0)
+        if sg == 0 or (sign and sg != sign):
+            break
+        sign, n = sg, n + 1
+    return (n, "상승" if sign > 0 else "하락") if n else (0, "")
+
+
+def trend_lines(Y, prov):
+    """Section 8-1 trend block: last TREND_N daily points per tenor, streak, 20-day range position,
+    short-vs-long spreads and which end led over 5/20 days. Y: {code: (hist, live, newest)}."""
+    names = dict(YIELDS)
+    L = [f"- 추세 추적 (최근 {TREND_N}거래일, 단위 %; 마지막 값 * = 정산 전 현재가):"]
+    ser = {}
+    for code, _ in YIELDS:
+        m = (Y.get(code) or (None,))[0]
+        if m:
+            ds = sorted(m)
+            ser[code] = (ds, [m[d] for d in ds])
+    for bucket, codes in BUCKETS:
+        for code in codes:
+            if code not in ser:
+                L.append(f"  - [{bucket}] {names[code]}: 데이터 수집 실패")
+                continue
+            ds, v = ser[code]
+            path = ", ".join(f"{x:.3f}" for x in v[-TREND_N:]) + ("*" if code in prov else "")
+            n, dirn = _streak(v)
+            w = v[-20:]
+            hi, lo = max(w), min(w)
+            pos = (v[-1] - lo) / (hi - lo) * 100 if hi > lo else 50
+            d10 = (v[-1] - v[-1 - TREND_N]) * 100 if len(v) > TREND_N else None
+            L.append(f"  - [{bucket}] {names[code]}: {path} ({ds[-min(TREND_N, len(ds))][5:]}~{ds[-1][5:]}) | {TREND_N}일 누적 "
+                     + (f"{d10:+.1f}bp ({ds[-1 - TREND_N][5:]} 대비)" if d10 is not None else "?")
+                     + (f" | {n}일 연속 {dirn}" if n >= 2 else "")
+                     + f" | 20일 범위 {lo:.3f}~{hi:.3f}, 현재 위치 {pos:.0f}%"
+                     + (" (20일 고점)" if v[-1] >= hi else " (20일 저점)" if v[-1] <= lo else ""))
+
+    def spread_path(a, b, label):
+        if a not in ser or b not in ser:
+            return
+        da, va = ser[a]
+        db, vb = ser[b]
+        mb = dict(zip(db, vb))
+        common = [(d, x - mb[d]) for d, x in zip(da, va) if d in mb]
+        if len(common) < TREND_N + 1:
+            return
+        sp = [x * 100 for _, x in common]
+        k20 = sp[-1] - sp[-21] if len(sp) > 20 else None
+        L.append(f"  - {label}: " + ", ".join(f"{x:+.0f}" for x in sp[-TREND_N:]) + "bp"
+                 + f" | {TREND_N}일 {sp[-1] - sp[-1 - TREND_N]:+.1f}bp"
+                 + (f", 20일 {k20:+.1f}bp" if k20 is not None else ""))
+    spread_path("US10YT=RR", "US2YT=RR", "장단기 격차 10년−2년")
+    spread_path("US10YT=RR", "US3MT=RR", "10년−3개월")
+    spread_path("US3MT=RR", "US1MT=RR", "초단기 커브 3개월−1개월(−면 단기 금리 인하 기대 쪽)")
+    if "US2YT=RR" in ser and "US10YT=RR" in ser:
+        for k in (5, 20):
+            v2, v10 = ser["US2YT=RR"][1], ser["US10YT=RR"][1]
+            if len(v2) > k and len(v10) > k:
+                d2, d10 = (v2[-1] - v2[-1 - k]) * 100, (v10[-1] - v10[-1 - k]) * 100
+                L.append(f"  - {k}일 기준 주도: 2년 {d2:+.1f}bp vs 10년 {d10:+.1f}bp → {_curve_shape(d2, d10)}")
+    if "US1MT=RR" in ser and "US2YT=RR" in ser:
+        v1, v2 = ser["US1MT=RR"][1], ser["US2YT=RR"][1]
+        if len(v1) > 20 and len(v2) > 20:
+            L.append(f"  - 초단기 vs 단기 20일: 1개월 {(v1[-1] - v1[-21]) * 100:+.1f}bp, 2년 {(v2[-1] - v2[-21]) * 100:+.1f}bp "
+                     "(1개월물은 정책금리·단기자금 수급, 2년물은 향후 1~2년 정책 경로 기대를 주로 반영)")
+    return L
+
+
 def section(last_session):
     """last_session: 'YYYY-MM-DD' of the last KRX close. Returns the printed block (str)."""
     errors = []
@@ -187,6 +265,8 @@ def section(last_session):
     if r10 and r3m:
         c3 = (r10["last"] - r3m["last"]) * 100
         L.append(f"  10년-3개월 {c3:+.0f}bp ({'역전' if c3 < 0 else '정상'}; 이번 {(r10['chg'] - r3m['chg'])*100:+.1f}bp)")
+
+    L.extend(trend_lines(Y, prov))
 
     jr = _move(J, last_session) if J else None
     if jr:
