@@ -541,6 +541,11 @@ def main():
         P(kospi_cds_corp.section(since, today))
     except Exception as e:  # noqa: BLE001
         P(f"\n## 8-3. 개별 기업·지수 CDS\n- !! 수집 실패: {type(e).__name__}: {e}")
+    try:
+        import kospi_risk
+        P(kospi_risk.section(since))
+    except Exception as e:  # noqa: BLE001
+        P(f"\n## 8-4. 변동성·안전자산·가상자산\n- !! 수집 실패: {type(e).__name__}: {e}")
 
     # ---------------------------------------------------- statistical baseline
     P("\n## 0. 통계 기준 예측 (예측 확률·범위의 출발점 — 이 값에서 ±10%p 이내로만 조정)")

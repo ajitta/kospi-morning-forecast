@@ -1,7 +1,7 @@
 ---
 name: kospi-morning-forecast
 description: Use when writing the daily pre-open KOSPI forecast.
-version: 1.6.0
+version: 1.7.0
 author: ajitta
 license: MIT
 platforms: [linux, macos]
@@ -21,7 +21,7 @@ direction forecast that is recorded and scored the next day. KOSPI only — KOSD
 ## Install / share / release
 
 Bundled files: `scripts/kospi_morning.py` (collector, cron `script=`), `scripts/kospi_model.py`
-(baseline), `scripts/kospi_rates.py` (US Treasury + credit block), `scripts/kospi_cds.py` (sovereign CDS block), `scripts/kospi_cds_corp.py` (company/index CDS levels + trades), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
+(baseline), `scripts/kospi_rates.py` (US Treasury + credit block), `scripts/kospi_cds.py` (sovereign CDS block), `scripts/kospi_cds_corp.py` (company/index CDS levels + trades), `scripts/kospi_risk.py` (VIX·VXN·gold·Bitcoin block), `scripts/kospi_record.py` (forecast log + git sync), `scripts/kospi_snapshot.py`
 (after-close snapshot, `--no-agent` cron job), `references/cron-prompt.md` (job prompt).
 `bash scripts/install.sh [--cron [<deliver>]] [--snapshot-cron [<deliver>]] [--with-history]` copies the
 scripts to `$HERMES_HOME/scripts/` (cron scripts must live there), smoke-tests the live data path,
@@ -120,6 +120,13 @@ When adding a feature, persist only what can't be re-fetched.
         전일/5일/20일 변화, 확대·축소 상위. 거래: DTCC 신규 체결 건수와 20세션 평균 대비 배수(× ≥2 = 헤지 수요 급증으로
         언급), 체결 상위. 해석 2–3줄: AI 신용 스트레스 → 반도체 밸류에이션·외국인 반도체 수급 경로. bp는 정산가 환산(≈)
         이므로 `≈`를 붙이고, 이력이 짧아 변화가 없으면 수준만 말한다. 확률 영향: 없음(미검증).
+      - 변동성·안전자산·가상자산 (section `8-4`): VIX·VXN 수준·변화(p, %, 크기 판정)·1년 백분위·구간, VXN−VIX 격차
+        (기술주 고유 불안), VIX/VIX3M 기간구조(>1 백워데이션 = 급성 스트레스), 금(정산·현재가), 비트코인(KRX 마감 이후
+        24시간 거래분) → 각 자산 **추세** 1줄(10일 경로·연속 일수·20일 범위 위치·20/60일선 위/아래·정배열/역배열) →
+        **해석 2–3줄**: 조합 판정(VIX↑+BTC↓(+금↑) = 위험회피, VIX↓+BTC↑ = 위험선호, 엇갈림이면 어느 자산 고유 이슈인지)
+        → KOSPI 경로(VXN·격차 확대 → 반도체·성장주 외국인 매도 압력; 백워데이션 → 장중 변동성 확대·범위 꼬리 위험;
+        금↓+BTC↓ 동반 = 현금 확보형 디레버리징). 구간(15/20/30)은 관행적 기준이라 그렇게 말한다. 확률 영향: 없음
+        (VIX·금 검증 기각, 비트코인 보류 — 블록의 '확률 영향' 줄 그대로).
    4. 전일 KOSPI 수급: 현물(외/기/개, 기관 세부, 5·20일 누적, 연속일), 선물(계약, 미결제 변화,
       누적 = 포지션 방향), 옵션 [기사 기반], 프로그램(차익/비차익)
    5. 강세/약세 테마 + 업종 수급, and what they imply for today
@@ -140,8 +147,11 @@ out-of-sample: direction 65.3% vs 55.5% always-up, Brier 0.2184 vs 0.247 base ra
 64%, 0.2223), well calibrated, 68% range covered 66.6%. HYG passed the feature rule (paired t −3.8,
 both 2019–22 and 2023–26 halves). Tested and rejected: foreign spot flow, previous day's KOSPI move,
 Treasury moves alone (IEF t −1.0; US10Y change 2023–26 t −0.8), HY-minus-Treasury credit-only
-return (t +0.2), Korea sovereign CDS 5y change z (KCIF since 2008, t +0.75) and 1-year level z (t +0.87)
-— don't re-add any of them as adjustment reasons.
+return (t +0.2), Korea sovereign CDS 5y change z (KCIF since 2008, t +0.75) and 1-year level z (t +0.87), VIX log change z
+(t −0.16), VIX 250-day level z (t +2.04, worse), GLD return z (t −1.42) — don't re-add any of them as
+adjustment reasons. On hold: Bitcoin return from 16:00 KST of the last session to 08:00 KST (Binance 1h)
+t −3.09 overall but 2019–22 t −1.12 / 2023–26 t −2.89, 7 specs tried; the post-US-close slice alone is
+t −1.02. Re-test after ~6 more months of OOS data before adding; until then it is not an adjustment reason.
 
 Changing the baseline: add a feature only if it improves walk-forward (refit every 40 days, test from
 2019) Brier over the current model with a paired t on per-day squared-error differences and in both
@@ -159,7 +169,7 @@ information the model can't see, and name it with a number + source:
 - one-off regime facts (circuit-breaker day, holiday gap of several sessions, option expiry)
 Never adjust for the US index moves themselves, Treasury yield / curve / credit-spread moves (HYG is
 in the model, the rest tested null), Korea CDS level or moves (tested null), company/index CDS levels, moves or
-trade counts (untested), foreign flows, "oversold" or general mood. No clear
+trade counts (untested), VIX/VXN level, moves or term structure, gold, Bitcoin (tested null / on hold), foreign flows, "oversold" or general mood. No clear
 reason → adjust 0. The range is the model's — don't widen or narrow it. Say plainly that the 68%
 range misses about one day in three and tail days (e.g. 2026-10-15 −7.57% vs range −3.6~+0.2) will fall
 outside.
@@ -212,6 +222,12 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   ends, >1 year back) and intraday `api/slice/SEC/CR` (rolling 24h list of S3 zips; the 08:00 KST run needs
   these for the last US session). Entity = REDID prefix (6 chars) of `Underlier ID-Leg 1`; names are often
   blank. Index CDS are in the CFTC file, not SEC.
+- Volatility / gold / crypto (section 8-4): VIX = Naver `chart/foreign/index/.VIX/day` (since 2016) + `index/.VIX/price`;
+  VXN and VIX3M are not on Naver (`.VXN` → 409) → CNBC `ts-api.cnbc.com/harmony/app/charts/1Y.json?symbol=.VXN`
+  (~2y daily, lags one session) + `quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=.VXN|.VIX3M&…&output=json`
+  (`last`, `last_time`). cdn.cboe.com CSVs are Cloudflare-blocked from the host, Yahoo 429, FRED CSV hangs. Gold = Naver
+  `marketindex/metals/GCcv1/prices` (+ live quote). Bitcoin = Binance `api/v3/klines?symbol=BTCUSDT` (1d, 1m at
+  06:30 UTC = KRX close) + `ticker/price`; Coinbase `api.exchange.coinbase.com/products/BTC-USD/candles` fallback (300 rows).
 - Daum (`finance.daum.net/api/...`, needs `Referer: https://finance.daum.net/`): investor days with
   detail breakdown, futures days (investor contracts + open interest), investor top lists (with
   `fromDate`/`toDate`), per-stock investor days (`/api/investor/days?symbolCode=A{code}`), sectors.
@@ -281,5 +297,8 @@ errors only warn). `install.sh --with-history` seeds an empty data dir from that
   over $5M print as `5,000,000+`. Curve-slope or continuity tricks to recover the sign failed against press
   levels — use ICE prices for levels, DTCC only for trade counts. Identical upfront % on ≥3 names = package
   trade artefact.
+- Binance/Coinbase daily klines include today's in-progress UTC candle (its close = current price); drop it before
+  appending the live price or the trend path shows the current price twice. A flat repeat (e.g. 61,271 twice) can be real.
+- CNBC 1Y bars lag the latest session; merge the quote API `last` only when `last_time` is ≥16:00 ET.
 - Holiday table `KRX_HOLIDAYS` in the script runs through 2027; the script warns when it expires.
   KRX can add ad-hoc closures (elections, temporary holidays) — add them when announced.

@@ -21,6 +21,15 @@ Korea sovereign CDS 5y (tested 2026-11, KCIF series since 2008, change from the 
 the last KRX session to the newest before T, / 20-day diff stdev):
   + CDS change z  0.2187 -> 0.2188 (t +0.75; 2019-22 t +0.97, 2023-26 t +0.23)
   + CDS 1y level z (t +0.87)   (worldgovernmentbonds series: change t +0.86, level t +1.23)  -> not in the model
+Volatility / gold / Bitcoin (tested 2026-11, same walk-forward over SOX+NDX+HYG, n≈1,877 OOS days):
+  + VIX log change z (same US sessions)   0.2184 -> 0.2182 (t -0.16; 2019-22 -0.19, 2023-26 -0.03)
+  + VIX level z vs 250 days                0.2183 -> 0.2185 (t +2.04, worse)
+  + GLD return z                           0.2184 -> 0.2177 (t -1.42; -1.26 / -0.81)
+  + BTC return z, 16:00 KST of the last session -> 08:00 KST of T (Binance 1h, / 20-day daily stdev)
+                                           0.2185 -> 0.2169 (t -3.09; 2019-22 -1.12, 2023-26 -2.89)
+    split: up to ~US close t -2.63 (-0.89 / -2.48); after the US close only t -1.02 (+0.62 / -1.62)
+  -> none in the model. BTC is on hold: the gain is mostly 2023-26, the first half is not
+     significant and 7 specifications were tried (rule: |t| >~ 3 with the gain in both halves).
 """
 import bisect
 import json
